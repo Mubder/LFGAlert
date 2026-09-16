@@ -1023,7 +1023,7 @@ end
 
 -- Live render probe for /lfgalert debug.
 function NS.ProbeLogUI()
-  local p = { pool = #rows, built = NS._rowsBuilt or 0 }
+  local p = { pool = #rows, built = NS._rowsBuilt or 0, bg = NS._bgMode or "?" }
   local r1 = rows[1]
   p.r1 = (r1 ~= nil)
   if r1 then
@@ -1135,6 +1135,7 @@ function NS.BuildLogUI()
   -- Plain frame + BackdropTemplate only (no Blizzard frame template), so
   -- the window always renders the same way.
   logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+  NS._bgMode = "none"
   if logFrame.SetBackdrop then
     logFrame:SetBackdrop({
       bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -1144,6 +1145,34 @@ function NS.BuildLogUI()
     })
     logFrame:SetBackdropColor(0.04, 0.06, 0.12, 0.96)
     logFrame:SetBackdropBorderColor(0.85, 0.68, 0.3, 1)
+    NS._bgMode = "backdrop"
+  end
+  -- Verify the backdrop actually applied; if it did not (exotic client),
+  -- paint the look manually so the window is never unstyled.
+  local okBG, bgInfo = pcall(logFrame.GetBackdrop, logFrame)
+  if not (okBG and bgInfo) then
+    NS._bgMode = "manual"
+    local bg = logFrame:CreateTexture(nil, "BACKGROUND")
+    bg:SetColorTexture(0.04, 0.06, 0.12, 0.96)
+    bg:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 6, -6)
+    bg:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -6, 6)
+    local function EdgeTex()
+      local t = logFrame:CreateTexture(nil, "BACKGROUND", nil, 1)
+      t:SetColorTexture(0.85, 0.68, 0.30, 1)
+      return t
+    end
+    local eT = EdgeTex(); eT:SetHeight(2)
+    eT:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 4, -4)
+    eT:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -4, -4)
+    local eB = EdgeTex(); eB:SetHeight(2)
+    eB:SetPoint("BOTTOMLEFT", logFrame, "BOTTOMLEFT", 4, 4)
+    eB:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -4, 4)
+    local eL = EdgeTex(); eL:SetWidth(2)
+    eL:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 4, -4)
+    eL:SetPoint("BOTTOMLEFT", logFrame, "BOTTOMLEFT", 4, 4)
+    local eR = EdgeTex(); eR:SetWidth(2)
+    eR:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -4, -4)
+    eR:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -4, 4)
   end
   -- Hidden FIRST: even if something later in this function errors, the
   -- window can never end up half-built and visible on login.
@@ -1154,9 +1183,10 @@ function NS.BuildLogUI()
   bell:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -10)
   bell:SetTexture("Interface\\Icons\\INV_Misc_Bell_01")
 
+  -- Build number in the title: instant proof of which code is rendering.
   local title = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("LEFT", bell, "RIGHT", 8, 0)
-  title:SetText(l("log_title", "LFGAlert Applicant Log"))
+  title:SetText(l("log_title", "LFGAlert Applicant Log") .. "  |cff999999(b" .. tostring(NS.BUILD) .. ")|r")
   title:SetTextColor(1, 0.82, 0)
 
   local close = CreateFrame("Button", nil, logFrame, "UIPanelCloseButton")

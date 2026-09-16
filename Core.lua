@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 18 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 19 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -1271,8 +1271,9 @@ SlashCmdList["LFGALERT"] = function(msg)
     if NS.ToggleLogUI then NS.ToggleLogUI(true) end
     if NS.GetLogUIState then
       local st = NS.GetLogUIState()
-      print(string.format("  window: built=%s shown=%s visibleRows=%d scroll=%d",
-        tostring(st.built), tostring(st.shown), st.visibleRows or 0, st.scrollOffset or 0))
+      print(string.format("  window: built=%s shown=%s visibleRows=%d scroll=%d bg=%s",
+        tostring(st.built), tostring(st.shown), st.visibleRows or 0, st.scrollOffset or 0,
+        tostring(NS._bgMode or "?")))
     end
     if NS.ProbeLogUI then
       local p = NS.ProbeLogUI()
