@@ -1,34 +1,42 @@
 -- LFGAlert - LogFrame.lua
--- Scrollable applicant log with right-click whisper/invite.
+-- Scrollable applicant log with right-click whisper/invite/decline.
+-- Smooth-scrolling list (FauxScrollFrame, no paging), sortable columns,
+-- resizable + position/scale-persistent window, class icons, new-row flash.
+-- ID-based LFG actions are gated to the current listing session: Blizzard
+-- reuses applicantIDs across delist/relist cycles, so acting on a stale ID
+-- from an old row could invite/decline the wrong current applicant.
 local ADDON_NAME = ...
 LFGAlert = LFGAlert or {}
 local NS = LFGAlert
+local L = NS.L or {}
+local function l(key, fallback) return L[key] or fallback end
 
 local ROW_HEIGHT = 22
-local PAGE_SIZE = 15 -- rows per page; fits the list area exactly
-NS.logPage = NS.logPage or 1 -- 1 = newest entries
+local ROW_GAP = 6
+local ACTW = 72 -- action-button zone at each row's right edge (3 x 20px)
+local DEFAULT_W, DEFAULT_H = 860, 480
+local MIN_W, MIN_H, MAX_W, MAX_H = 680, 320, 1400, 1000
+local NAME_ICON_W = 18 -- class-icon strip inside the Applicant column
+local MAX_ROWS = 60 -- visible row pool cap
+local SCROLL_ZONE = 30 -- right edge of the list kept clear for the scrollbar
+local FLASH_WINDOW = 8 -- seconds a fresh "queued" row keeps pulsing
 
-local logFrame, listContainer, rows = nil, nil, {}
-local countLabel
-local prevBtn, nextBtn
+local logFrame, listArea, scrollFrame, searchBox, countLabel
+local filterButton, classBtn, keyBtn, resetFiltersBtn
+local rows = {} -- visible row pool (index = on-screen slot, 1 = top)
+local view = {} -- display-order entries (view[1] = top row)
+local headerWidgets = {}
+local sortKey, sortDir = "time", "desc"
+local selectedEntry
+local lastN = 0
+local refreshQueued = false
+local uiReady = false
 
-local function ClassColorize(classFileName, text)
-  if classFileName and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFileName] then
-    local c = RAID_CLASS_COLORS[classFileName]
-    if c.WrapTextInColorCode then
-      return c:WrapTextInColorCode(text)
-    elseif c.colorStr then
-      return "|c" .. c.colorStr .. text .. "|r"
-    end
-  end
-  return text
-end
+-- Forward declarations (assigned below; referenced by scripts/closures).
+local RenderRows, ScrollBy, RefreshNow
 
-local function ShortName(fullName)
-  if not fullName then return "?" end
-  local bare = strsplit("-", fullName, 2)
-  return bare or fullName
-end
+local ClassColorize = NS.ClassColorize or function(_, text) return text end
+local ShortName = NS.ShortName or function(n) return n or "?" end
 
 local function TimeStr(t)
   if not t then return "--:--" end
@@ -36,25 +44,21 @@ local function TimeStr(t)
 end
 
 -- ---------------------------------------------------------------------------
--- Table columns. ONE definition drives both the header labels and every row,
+-- Table columns. ONE definition drives the header, sorting and every row,
 -- so values always sit exactly under their heading. Numeric columns are
 -- right-aligned; text is truncated (UTF-8 safe) so it can never bleed over.
 -- ---------------------------------------------------------------------------
 
-local FRAME_W, FRAME_H = 860, 480
-local ROW_GAP = 6
-local ACTW = 72 -- action-button zone at each row's right edge (3 x 20px)
-
 local COLS = {
-  { key = "time",   label = "Time",       width = 56,  justify = "LEFT" },
-  { key = "name",   label = "Applicant",  width = 112, justify = "LEFT" },
-  { key = "role",   label = "Role",       width = 58,  justify = "LEFT" },
-  { key = "spec",   label = "Class/Spec", width = 92,  justify = "LEFT" },
-  { key = "run",    label = "Key",        width = 58,  justify = "LEFT" },
-  { key = "ilvl",   label = "iLvl",       width = 46,  justify = "RIGHT" },
-  { key = "score",  label = "M+ Score",   width = 52,  justify = "RIGHT" },
-  { key = "status", label = "Status",     width = 112, justify = "LEFT" },
-  { key = "note",   label = "Notes",      width = 0,   justify = "LEFT" }, -- fills remainder before actions
+  { key = "time",   label = l("col_time", "Time"),       width = 56,  justify = "LEFT",  sort = true },
+  { key = "name",   label = l("col_name", "Applicant"),  width = 112, justify = "LEFT",  sort = true },
+  { key = "role",   label = l("col_role", "Role"),       width = 58,  justify = "LEFT" },
+  { key = "spec",   label = l("col_spec", "Class/Spec"), width = 92,  justify = "LEFT" },
+  { key = "run",    label = l("col_run", "Key"),         width = 58,  justify = "LEFT",  sort = true },
+  { key = "ilvl",   label = l("col_ilvl", "iLvl"),       width = 46,  justify = "RIGHT", sort = true },
+  { key = "score",  label = l("col_score", "M+ Score"),  width = 52,  justify = "RIGHT", sort = true },
+  { key = "status", label = l("col_status", "Status"),   width = 112, justify = "LEFT",  sort = true },
+  { key = "note",   label = l("col_note", "Notes"),      width = 0,   justify = "LEFT" },
 }
 
 -- Byte-safe truncation that never splits a UTF-8 sequence.
@@ -78,41 +82,41 @@ local CLASS_ORDER = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHK
   "SHAMAN", "MAGE", "WARLOCK", "MONK", "DRUID", "DEMONHUNTER", "EVOKER" }
 
 local function ClassLabel(classFile)
-  if classFile == "ALL" then return "All Classes" end
+  if classFile == "ALL" then return l("all_classes", "All Classes") end
   local loc = LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classFile]
   return ClassColorize(classFile, loc or (classFile or "?"):lower():gsub("^%l", string.upper))
 end
 
-local KEY_OPTIONS = { 0, 2, 5, 10, 15, 20 }
+local KEY_OPTIONS = { 0, 2, 4, 6, 8, 10, 12, 15, 20 }
 
 local function KeyLabel(minKey)
-  if not minKey or minKey <= 0 then return "All" end
-  return "+" .. tostring(minKey) .. "+"
+  if not minKey or minKey <= 0 then return l("filter_all", "All") end
+  return l("key_label_fmt", "+%d+"):format(minKey)
 end
 
 function NS.SetLogClassFilter(class)
   local c = (class or "ALL"):upper():gsub("%s+", "")
   if c ~= "ALL" and not (RAID_CLASS_COLORS and RAID_CLASS_COLORS[c]) then c = "ALL" end
   NS.logFilter.class = c
-  if NS.RefreshLogUI then NS.RefreshLogUI() end
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
   return c
 end
 
 function NS.SetLogMinKey(n)
   n = math.max(0, math.floor(tonumber(n) or 0))
   NS.logFilter.minKey = n
-  if NS.RefreshLogUI then NS.RefreshLogUI() end
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
   return n
 end
 
 -- Filter keys shown in the dropdown. Several raw statuses collapse into one key.
 local FILTER_OPTIONS = {
-  { key = "ALL",      label = "All" },
-  { key = "QUEUED",   label = "Queued" },
-  { key = "INVITED",  label = "Invited" },
-  { key = "ACCEPTED", label = "Accepted" },
-  { key = "DECLINED", label = "Declined" },
-  { key = "GONE",     label = "Cancelled / Timeout" },
+  { key = "ALL",      label = l("filter_all", "All") },
+  { key = "QUEUED",   label = l("filter_queued", "Queued") },
+  { key = "INVITED",  label = l("filter_invited", "Invited") },
+  { key = "ACCEPTED", label = l("filter_accepted", "Accepted") },
+  { key = "DECLINED", label = l("filter_declined", "Declined") },
+  { key = "GONE",     label = l("filter_gone", "Cancelled / Timeout") },
 }
 
 local DECLINED_SET = {
@@ -133,7 +137,7 @@ local function FilterLabel(key)
   for _, o in ipairs(FILTER_OPTIONS) do
     if o.key == key then return o.label end
   end
-  return key or "All"
+  return key or l("filter_all", "All")
 end
 
 function NS.SetLogFilter(status)
@@ -144,19 +148,28 @@ function NS.SetLogFilter(status)
     if o.key == s then valid = true break end
   end
   NS.logFilter.status = valid and s or "ALL"
-  if NS.RefreshLogUI then NS.RefreshLogUI() end
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
   return NS.logFilter.status
 end
 
 function NS.SetLogSearch(q)
   NS.logFilter.query = (q or ""):lower()
-  if NS.RefreshLogUI then NS.RefreshLogUI() end
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
+end
+
+function NS.ResetLogFilters()
+  NS.logFilter.status = "ALL"
+  NS.logFilter.class = "ALL"
+  NS.logFilter.minKey = 0
+  NS.logFilter.query = ""
+  if searchBox then searchBox:SetText("") end -- fires OnTextChanged -> refresh
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
 end
 
 local function EntryMatches(entry)
   local f = NS.logFilter
   if entry.separator then
-    -- Separators only make sense in the unfiltered view.
+    -- Separators only make sense in the unfiltered chronological view.
     return f.status == "ALL" and (f.class or "ALL") == "ALL"
       and (f.minKey or 0) <= 0 and (f.query == nil or f.query == "")
   end
@@ -200,11 +213,89 @@ local function EntryMatches(entry)
 end
 
 -- ---------------------------------------------------------------------------
+-- Sorting (click a column header)
+-- ---------------------------------------------------------------------------
+
+local SORT_VALUE = {
+  time   = function(e) return e.t or 0 end,
+  name   = function(e)
+    local m = e.members and e.members[1]
+    return (m and m.name or ""):lower()
+  end,
+  run    = function(e) return e.key or 0 end,
+  ilvl   = function(e)
+    local m = e.members and e.members[1]
+    return (m and m.itemLevel) or 0
+  end,
+  score  = function(e)
+    local m = e.members and e.members[1]
+    return (m and NS.EffectiveScore and NS.EffectiveScore(m)) or 0
+  end,
+  status = function(e) return select(1, NS.StatusLabel(e.status)) end,
+}
+
+local function ToggleSort(key)
+  if not SORT_VALUE[key] then return end
+  if sortKey == key then
+    sortDir = (sortDir == "asc") and "desc" or "asc"
+  else
+    sortKey = key
+    sortDir = (key == "name" or key == "status") and "asc" or "desc"
+  end
+  selectedEntry = nil
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
+end
+
+-- Build the display-order view (view[1] = top row).
+local function BuildView()
+  wipe(view)
+  local log = (NS.db and NS.db.log) or {}
+  if sortKey == "time" then
+    if sortDir == "desc" then
+      for i = #log, 1, -1 do
+        local e = log[i]
+        if EntryMatches(e) then view[#view + 1] = e end
+      end
+    else
+      for i = 1, #log do
+        local e = log[i]
+        if EntryMatches(e) then view[#view + 1] = e end
+      end
+    end
+  else
+    -- Session separators are chronological dividers: hide them in sorted views.
+    for _, e in ipairs(log) do
+      if EntryMatches(e) and not e.separator then view[#view + 1] = e end
+    end
+    local vf = SORT_VALUE[sortKey]
+    table.sort(view, function(a, b)
+      local va, vb = vf(a), vf(b)
+      if va == vb then return (a.t or 0) > (b.t or 0) end
+      if sortDir == "asc" then return va < vb end
+      return va > vb
+    end)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Session guard: applicantIDs reset on relist, so ID-based LFG actions are
+-- only valid for entries logged during the CURRENT listing session.
+-- ---------------------------------------------------------------------------
+
+local function RowLFGActionsAllowed(entry)
+  return entry ~= nil and not entry.separator
+    and entry.applicantID and entry.applicantID ~= 0
+    and entry.session ~= nil
+    and NS.CurrentListingSession ~= nil
+    and entry.session == NS.CurrentListingSession()
+end
+
+-- ---------------------------------------------------------------------------
 -- Context menu (right-click a row)
 -- ---------------------------------------------------------------------------
 
 local function ShowRowMenu(anchor, entry)
-  if not entry or not entry.members or not entry.members[1] then return end
+  if not entry or entry.separator or not entry.members or not entry.members[1] then return end
   local mem = entry.members[1]
   local fullName = mem.name
   local applicantID = entry.applicantID
@@ -213,25 +304,22 @@ local function ShowRowMenu(anchor, entry)
   if MenuUtil and MenuUtil.CreateContextMenu then
     MenuUtil.CreateContextMenu(anchor, function(_, root)
       root:CreateTitle(ShortName(fullName))
-      root:CreateButton("Whisper", function()
+      root:CreateButton(l("m_whisper", "Whisper"), function()
         NS.Whisper(fullName)
       end)
-      root:CreateButton("Invite to group", function()
-        if applicantID and applicantID ~= 0 then
-          NS.InviteApplicantByID(applicantID)
-        end
+      root:CreateButton(l("m_invite_name", "Invite to group (by name)"), function()
         NS.InviteByName(fullName)
       end)
-      if applicantID and applicantID ~= 0 then
-        root:CreateButton("Accept applicant (LFG invite)", function()
+      if RowLFGActionsAllowed(entry) then
+        root:CreateButton(l("m_accept", "Accept applicant (LFG invite)"), function()
           NS.InviteApplicantByID(applicantID)
         end)
-        root:CreateButton("Decline applicant", function()
+        root:CreateButton(l("m_decline", "Decline applicant"), function()
           NS.DeclineApplicantByID(applicantID)
         end)
       end
       root:CreateDivider()
-      root:CreateButton("Copy name", function()
+      root:CreateButton(l("m_copy_name", "Copy name"), function()
         local eb = ChatEdit_ChooseBoxForSend()
         if eb then
           eb:Show()
@@ -249,33 +337,74 @@ local function ShowRowMenu(anchor, entry)
   end
   local menu = {
     { text = ShortName(fullName), isTitle = true, notCheckable = true },
-    { text = "Whisper", notCheckable = true, func = function() NS.Whisper(fullName) end },
-    { text = "Invite to group", notCheckable = true, func = function()
-        if applicantID and applicantID ~= 0 then NS.InviteApplicantByID(applicantID) end
+    { text = l("m_whisper", "Whisper"), notCheckable = true, func = function() NS.Whisper(fullName) end },
+    { text = l("m_invite_name", "Invite to group (by name)"), notCheckable = true, func = function()
         NS.InviteByName(fullName)
       end },
   }
-  if applicantID and applicantID ~= 0 then
-    menu[#menu + 1] = { text = "Decline applicant", notCheckable = true, func = function() NS.DeclineApplicantByID(applicantID) end }
+  if RowLFGActionsAllowed(entry) then
+    menu[#menu + 1] = { text = l("m_decline", "Decline applicant"), notCheckable = true, func = function() NS.DeclineApplicantByID(applicantID) end }
   end
   EasyMenu(menu, LFGAlertDropMenu, "cursor", 0, 0, "MENU")
+end
+
+-- ---------------------------------------------------------------------------
+-- Class icon (graceful degradation: hidden content never errors)
+-- ---------------------------------------------------------------------------
+
+local function SetClassIcon(tex, classFile)
+  if not tex then return end
+  if not classFile or classFile == "" then tex:SetTexture(nil) return end
+  if C_Texture and C_Texture.GetClassNameIconAtlas then
+    local ok, atlas = pcall(C_Texture.GetClassNameIconAtlas, classFile)
+    if ok and atlas then
+      local okS = pcall(tex.SetAtlas, tex, atlas)
+      if okS then return end
+    end
+  end
+  pcall(tex.SetAtlas, tex, "ClassIcon-" .. classFile .. "-Circle")
 end
 
 -- ---------------------------------------------------------------------------
 -- Rows
 -- ---------------------------------------------------------------------------
 
-local function MakeRow(parent, idx)
-  local b = CreateFrame("Button", nil, parent)
+local function MakeRow(i)
+  local b = CreateFrame("Button", nil, listArea)
   b:SetHeight(ROW_HEIGHT)
-  b:SetPoint("TOPLEFT", parent, "TOPLEFT", 4, -(idx - 1) * ROW_HEIGHT - 4)
-  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, -(idx - 1) * ROW_HEIGHT - 4)
+  b:SetPoint("TOPLEFT", listArea, "TOPLEFT", 4, -(i - 1) * ROW_HEIGHT - 4)
+  b:SetPoint("TOPRIGHT", listArea, "TOPRIGHT", -(SCROLL_ZONE + 4), -(i - 1) * ROW_HEIGHT - 4)
 
   -- Row background: tinted per status on every refresh (see StatusTint).
   local stripe = b:CreateTexture(nil, "BACKGROUND")
   stripe:SetAllPoints()
   stripe:SetColorTexture(0.5, 0.38, 0.12, 0.2)
   b.stripe = stripe
+
+  -- Selection highlight (left-click selects; actions stay on buttons/menu).
+  local selTex = b:CreateTexture(nil, "ARTWORK")
+  selTex:SetAllPoints()
+  selTex:SetColorTexture(1, 0.82, 0, 0.15)
+  selTex:Hide()
+  b.selTex = selTex
+
+  -- New-row flash: brief alpha pulse on freshly queued applicants.
+  local flash = b:CreateTexture(nil, "ARTWORK")
+  flash:SetAllPoints()
+  flash:SetColorTexture(1, 0.82, 0, 0.20)
+  flash:Hide()
+  local ag = flash:CreateAnimationGroup()
+  local alpha = ag:CreateAnimation("Alpha")
+  alpha:SetFromAlpha(1)
+  alpha:SetToAlpha(0)
+  alpha:SetDuration(0.8)
+  alpha:SetSmoothing("OUT")
+  b.flash = flash
+  b.flashAnim = ag
+
+  -- Class icon inside the Applicant column.
+  b.icon = b:CreateTexture(nil, "OVERLAY")
+  b.icon:SetSize(14, 14)
 
   -- One FontString per column, laid out from the same COLS spec as the header.
   -- The note column stops before the action-button zone at the right edge.
@@ -288,6 +417,11 @@ local function MakeRow(parent, idx)
     if c.key == "note" then
       fs:SetPoint("LEFT", b, "LEFT", x, 0)
       fs:SetPoint("RIGHT", b, "RIGHT", -(2 + ACTW + ROW_GAP), 0)
+    elseif c.key == "name" then
+      b.icon:SetPoint("LEFT", b, "LEFT", x + 1, 1)
+      fs:SetPoint("LEFT", b, "LEFT", x + NAME_ICON_W, 0)
+      fs:SetWidth(c.width)
+      x = x + c.width + NAME_ICON_W + ROW_GAP
     else
       fs:SetPoint("LEFT", b, "LEFT", x, 0)
       fs:SetWidth(c.width)
@@ -297,11 +431,12 @@ local function MakeRow(parent, idx)
   end
 
   -- One-click action buttons (whisper / invite / decline), right edge.
+  -- Decline only appears for CURRENT-session rows with a live applicantID.
   b.act = {}
   local actDefs = {
-    { icon = "Interface\\Buttons\\UI-GuildButton-PublicNote-Up", tip = "Whisper" },
-    { icon = "Interface\\RaidFrame\\ReadyCheck-Ready", tip = "Invite to group" },
-    { icon = "Interface\\RaidFrame\\ReadyCheck-NotReady", tip = "Decline applicant" },
+    { icon = "Interface\\Buttons\\UI-GuildButton-PublicNote-Up", tip = l("act_whisper", "Whisper") },
+    { icon = "Interface\\RaidFrame\\ReadyCheck-Ready", tip = l("act_invite", "Invite to group") },
+    { icon = "Interface\\RaidFrame\\ReadyCheck-NotReady", tip = l("act_decline", "Decline applicant") },
   }
   for i, a in ipairs(actDefs) do
     local ab = CreateFrame("Button", nil, b)
@@ -316,9 +451,10 @@ local function MakeRow(parent, idx)
       if i == 1 then
         NS.Whisper(fullName)
       elseif i == 2 then
-        if applicantID and applicantID ~= 0 then NS.InviteApplicantByID(applicantID) end
+        -- By-name invites are always safe; the ID path only for live IDs.
+        if RowLFGActionsAllowed(e) then NS.InviteApplicantByID(applicantID) end
         NS.InviteByName(fullName)
-      elseif applicantID and applicantID ~= 0 then
+      elseif RowLFGActionsAllowed(e) then
         NS.DeclineApplicantByID(applicantID)
       end
     end)
@@ -342,10 +478,14 @@ local function MakeRow(parent, idx)
   b:SetScript("OnClick", function(self, button)
     if button == "RightButton" and self.entry then
       ShowRowMenu(self, self.entry)
-    elseif self.entry and self.entry.members and self.entry.members[1] then
-      NS.Whisper(self.entry.members[1].name)
+    elseif self.entry and not self.entry.separator then
+      -- Left-click selects (toggle); whisper stays on the button/menu so a
+      -- stray click can never open a whisper to a stranger.
+      selectedEntry = (selectedEntry == self.entry) and nil or self.entry
+      RenderRows()
     end
   end)
+  b:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta) end)
   b:SetScript("OnEnter", function(self)
     if not self.entry then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -364,37 +504,37 @@ local function MakeRow(parent, idx)
     end
     if NS.ResolveRole and NS.RoleTag then
       local roleTag = NS.RoleTag(NS.ResolveRole(m))
-      GameTooltip:AddDoubleLine("Role", roleTag, 1, 1, 1, 1, 1, 1)
+      GameTooltip:AddDoubleLine(l("tt_role", "Role"), roleTag, 1, 1, 1, 1, 1, 1)
     end
     if e.dungeon or e.key then
       local runLine = (e.key and ("+" .. e.key .. " ") or "") .. (e.dungeonFull or e.dungeon or "")
-      if e.keySource == "keystone" then runLine = runLine .. "  |cffaaaaaa(your key)|r" end
-      GameTooltip:AddDoubleLine("Run", runLine, 1, 1, 1, 1, 0.82, 0)
+      if e.keySource == "keystone" then runLine = runLine .. "|cffaaaaaa" .. l("tt_yourkey", " (your key)") .. "|r" end
+      GameTooltip:AddDoubleLine(l("tt_run", "Run"), runLine, 1, 1, 1, 1, 0.82, 0)
     end
     if e.listingTitle and e.listingTitle ~= "" then
-      GameTooltip:AddDoubleLine("Listing", e.listingTitle, 1, 1, 1, 0.8, 0.8, 0.8)
+      GameTooltip:AddDoubleLine(l("tt_listing", "Listing"), e.listingTitle, 1, 1, 1, 0.8, 0.8, 0.8)
     end
-    GameTooltip:AddDoubleLine("Item level", tostring(m.itemLevel or "-"), 1,1,1, 1,1,1)
+    GameTooltip:AddDoubleLine(l("tt_ilvl", "Item level"), tostring(m.itemLevel or "-"), 1, 1, 1, 1, 1, 1)
     local blizz = (m.dungeonScore and m.dungeonScore > 0) and tostring(m.dungeonScore) or "-"
     local rio = (m.rioScore and m.rioScore > 0) and tostring(m.rioScore) or "-"
-    GameTooltip:AddDoubleLine("M+ rating (Blizzard)", blizz, 1,1,1, 1,1,1)
-    GameTooltip:AddDoubleLine("RIO score" .. (_G.RaiderIO and "" or " (install Raider.IO)"), rio, 1,1,1, 1,1,1)
+    GameTooltip:AddDoubleLine(l("tt_blizz", "M+ rating (Blizzard)"), blizz, 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine(l("tt_rio", "RIO score") .. (_G.RaiderIO and "" or l("tt_rio_install", " (install Raider.IO)")), rio, 1, 1, 1, 1, 1, 1)
     if (e.numMembers or 1) > 1 and e.members then
       GameTooltip:AddLine(" ")
-      GameTooltip:AddLine("Group application (" .. e.numMembers .. "):", 0.9, 0.9, 0.9)
+      GameTooltip:AddLine(l("tt_group_fmt", "Group application (%d):"):format(e.numMembers), 0.9, 0.9, 0.9)
       for i = 2, math.min(#e.members, 8) do
         local o = e.members[i]
-        GameTooltip:AddDoubleLine(ShortName(o.name), (o.specName or o.class or "") .. "  ilvl " .. tostring(o.itemLevel or "-") .. "  M+ " .. tostring((o.rioScore and o.rioScore > 0) and o.rioScore or (o.dungeonScore or "-")), 1,1,1, 0.9,0.9,0.9)
+        GameTooltip:AddDoubleLine(ShortName(o.name), (o.specName or o.class or "") .. "  ilvl " .. tostring(o.itemLevel or "-") .. "  M+ " .. tostring((o.rioScore and o.rioScore > 0) and o.rioScore or (o.dungeonScore or "-")), 1, 1, 1, 0.9, 0.9, 0.9)
       end
     end
     if e.comment and e.comment ~= "" then
       GameTooltip:AddLine(" ")
       GameTooltip:AddLine("\"" .. e.comment .. "\"", 0.7, 0.9, 1, true)
     end
-    local label, _ = NS.StatusLabel(e.status)
+    local label = NS.StatusLabel and select(1, NS.StatusLabel(e.status)) or tostring(e.status)
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("Status: " .. label, 0.8, 0.8, 0.8)
-    GameTooltip:AddLine("Right-click: whisper / invite / decline", 0.6, 0.6, 0.6)
+    GameTooltip:AddLine(l("tt_status_fmt", "Status: %s"):format(label), 0.8, 0.8, 0.8)
+    GameTooltip:AddLine(l("tt_rc_hint", "Right-click: whisper / invite / decline"), 0.6, 0.6, 0.6)
     GameTooltip:Show()
   end)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -457,61 +597,189 @@ local function EntryColumns(entry)
     local scoreNum = (m.rioScore and m.rioScore > 0) and m.rioScore or (m.dungeonScore or 0)
     scoreTxt = (scoreNum and scoreNum > 0) and tostring(math.floor(scoreNum)) or "-"
   end
-  local nameTxt = star .. ClassColorize(m.class, Trunc(ShortName(m.name), 20))
+  local nameTxt = star .. ClassColorize(m.class, Trunc(ShortName(m.name), 18))
   if (entry.numMembers or 1) > 1 then
     nameTxt = nameTxt .. " |cffaaaaaa+" .. ((entry.numMembers or 1) - 1) .. "|r"
   end
   cols.name = nameTxt
   cols.role = NS.RoleTag(NS.ResolveRole(m))
   if entry.autoDeclined then
-    cols.status = "|cffff5555Declined" .. (entry.declineReason and (" (" .. entry.declineReason .. ")") or " (Auto)") .. "|r"
+    cols.status = "|cffff5555" .. l("declined_label", "Declined")
+      .. (entry.declineReason and (" (" .. entry.declineReason .. ")") or (" (" .. l("auto_label", "Auto") .. ")")) .. "|r"
   elseif entry.status == "applied" and thrOn and meetsAll then
-    cols.status = "|cffffd100Queued ★|r"
+    cols.status = "|cffffd100" .. l("queued_star", "Queued ★") .. "|r"
   end
   cols.spec = Trunc(m.specName or m.localizedClass or m.class or "-", 14)
   cols.ilvl = ilvlTxt
   cols.score = scoreTxt
-  cols.note = (entry.comment and entry.comment ~= "") and ("|cff88bbff" .. Trunc(entry.comment, 22) .. "|r") or ""
+  cols.note = (entry.comment and entry.comment ~= "") and ("|cff88bbff" .. Trunc(entry.comment, 40) .. "|r") or ""
   return cols
 end
 
-local filterButton, searchBox, classBtn, keyBtn
+-- ---------------------------------------------------------------------------
+-- Render loop (FauxScrollFrame pattern: fixed row pool, offset into `view`)
+-- ---------------------------------------------------------------------------
 
-local function RefreshFilterButton()
-  if filterButton and filterButton.Text then
-    filterButton.Text:SetText("Status: " .. FilterLabel(NS.logFilter.status))
-  elseif filterButton then
-    filterButton:SetText("Status: " .. FilterLabel(NS.logFilter.status))
+local function RenderRow(row, entry)
+  if not entry then
+    row:Hide()
+    row.entry = nil
+    return
+  end
+  row:Show()
+  row.entry = entry
+  local tr, tg, tb, ta = 0.2, 0.2, 0.2, 0.12
+  if not entry.separator then
+    tr, tg, tb = StatusTint(entry.status)
+    ta = 0.22
+  end
+  row.stripe:SetColorTexture(tr, tg, tb, ta)
+  local m0 = (not entry.separator) and entry.members and entry.members[1] or nil
+  SetClassIcon(row.icon, m0 and m0.class or nil)
+  row.act[1]:SetShown(not entry.separator)
+  row.act[2]:SetShown(not entry.separator)
+  row.act[3]:SetShown(RowLFGActionsAllowed(entry))
+  if entry == selectedEntry then row.selTex:Show() else row.selTex:Hide() end
+  if not entry.separator and entry.status == "applied" and (time() - (entry.t or 0)) <= FLASH_WINDOW then
+    row.flash:Show()
+    if not row.flashAnim:IsPlaying() then row.flashAnim:Play() end
+  else
+    row.flashAnim:Stop()
+    row.flash:Hide()
+  end
+  if entry.separator then
+    for _, c in ipairs(COLS) do
+      row.cols[c.key]:SetText(c.key == "name" and entry.separator or "")
+    end
+  else
+    local okR, vals = pcall(EntryColumns, entry)
+    if okR and vals then
+      for _, c in ipairs(COLS) do
+        row.cols[c.key]:SetText(vals[c.key] or "")
+      end
+    else
+      NS._lastRenderError = tostring(vals)
+      for _, c in ipairs(COLS) do
+        row.cols[c.key]:SetText(c.key == "name" and "|cffff5555Render error — /lfgalert debug|r" or "")
+      end
+    end
   end
 end
+
+RenderRows = function()
+  if not (scrollFrame and listArea) then return end
+  local n = #view
+  local visible = math.floor((scrollFrame:GetHeight() or 0) / ROW_HEIGHT + 0.5)
+  if visible < 1 then visible = 1 end
+  if visible > MAX_ROWS then visible = MAX_ROWS end
+  FauxScrollFrame_Update(scrollFrame, n, visible, ROW_HEIGHT)
+  local offset = FauxScrollFrame_GetOffset(scrollFrame)
+  for i = 1, visible do
+    local row = rows[i]
+    if not row then
+      local okR, r = pcall(MakeRow, i)
+      if okR and r then
+        row = r
+        rows[i] = row
+        NS._rowsBuilt = (NS._rowsBuilt or 0) + 1
+      else
+        NS._rowBuildError = "row " .. i .. ": " .. tostring(r)
+        return
+      end
+    end
+    RenderRow(row, view[offset + i])
+  end
+  for i = visible + 1, #rows do
+    rows[i]:Hide()
+    rows[i].entry = nil
+  end
+  -- Empty state: say WHY it's empty (no data vs. filter hiding everything).
+  if n == 0 then
+    local r = rows[1]
+    if r then
+      local log = NS.db and NS.db.log or {}
+      local hint = (#log == 0) and l("empty_none", "No applicants logged yet — new queues will appear here")
+        or l("empty_filtered", "No match — set Filter: All and clear the search box")
+      r:Show()
+      r.entry = nil
+      for _, c in ipairs(COLS) do
+        r.cols[c.key]:SetText(c.key == "name" and ("|cffaaaaaa" .. hint .. "|r") or "")
+      end
+      r.icon:SetTexture(nil)
+      r.selTex:Hide()
+      r.flash:Hide()
+      r.act[1]:Hide()
+      r.act[2]:Hide()
+      r.act[3]:Hide()
+    end
+  end
+end
+
+local function GetScrollBar()
+  if not scrollFrame then return nil end
+  return scrollFrame.scrollBar or _G["LFGAlertLogScrollBar"]
+end
+
+ScrollBy = function(delta)
+  if not scrollFrame then return end
+  local sb = GetScrollBar()
+  if sb and sb.SetValue then
+    local _, maxVal = sb:GetMinMaxValues()
+    local v = sb:GetValue() - delta * ROW_HEIGHT * 3
+    if v < 0 then v = 0 end
+    if v > maxVal then v = maxVal end
+    sb:SetValue(v)
+  end
+  RenderRows() -- in case the template's own wiring differs
+end
+
+-- ---------------------------------------------------------------------------
+-- Filter/menu button labels
+-- ---------------------------------------------------------------------------
 
 local function SetButtonLabel(btn, text)
   if not btn then return end
   if btn.Text then btn.Text:SetText(text) else btn:SetText(text) end
 end
 
-local function RefreshClassButton()
+local function RefreshFilterButtons()
+  SetButtonLabel(filterButton, l("fmt_status_btn", "Status: %s"):format(FilterLabel(NS.logFilter.status)))
   local cf = NS.logFilter.class or "ALL"
-  local label = cf == "ALL" and "All" or (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[cf]) or cf
-  SetButtonLabel(classBtn, "Class: " .. label)
+  local classLabel = cf == "ALL" and l("filter_all", "All")
+    or ((LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[cf]) or cf)
+  SetButtonLabel(classBtn, l("fmt_class_btn", "Class: %s"):format(classLabel))
+  SetButtonLabel(keyBtn, l("fmt_key_btn", "Key: %s"):format(KeyLabel(NS.logFilter.minKey)))
+  if resetFiltersBtn then
+    local active = NS.logFilter.status ~= "ALL" or (NS.logFilter.class or "ALL") ~= "ALL"
+      or (NS.logFilter.minKey or 0) > 0 or (NS.logFilter.query ~= nil and NS.logFilter.query ~= "")
+    resetFiltersBtn:SetShown(active)
+  end
 end
 
-local function RefreshKeyButton()
-  SetButtonLabel(keyBtn, "Key: " .. KeyLabel(NS.logFilter.minKey))
+local function RefreshHeaderWidgets()
+  for key, w in pairs(headerWidgets) do
+    if SORT_VALUE[key] and w then
+      local arrow = ""
+      if sortKey == key then
+        arrow = (sortDir == "asc") and " ▲" or " ▼"
+      end
+      w:SetText(w.label .. arrow)
+    end
+  end
 end
 
 local function ShowClassMenu(anchor)
   if MenuUtil and MenuUtil.CreateContextMenu then
     MenuUtil.CreateContextMenu(anchor, function(_, root)
-      root:CreateTitle("Filter by class")
-      root:CreateCheckbox("All Classes",
+      root:CreateTitle(l("class_filter_title", "Filter by class"))
+      root:CreateCheckbox(l("all_classes", "All Classes"),
         function() return (NS.logFilter.class or "ALL") == "ALL" end,
-        function() NS.SetLogClassFilter("ALL") RefreshClassButton() end)
+        function() NS.SetLogClassFilter("ALL") end)
       for _, classFile in ipairs(CLASS_ORDER) do
         local cf = classFile
         root:CreateCheckbox(ClassLabel(cf),
           function() return NS.logFilter.class == cf end,
-          function() NS.SetLogClassFilter(cf) RefreshClassButton() end)
+          function() NS.SetLogClassFilter(cf) end)
       end
     end)
     return
@@ -519,13 +787,13 @@ local function ShowClassMenu(anchor)
   if not LFGAlertClassMenu then
     CreateFrame("Frame", "LFGAlertClassMenu", UIParent, "UIDropDownMenuTemplate")
   end
-  local menu = { { text = "Filter by class", isTitle = true, notCheckable = true },
-    { text = "All Classes", checked = (NS.logFilter.class or "ALL") == "ALL",
-      func = function() NS.SetLogClassFilter("ALL") RefreshClassButton() end } }
+  local menu = { { text = l("class_filter_title", "Filter by class"), isTitle = true, notCheckable = true },
+    { text = l("all_classes", "All Classes"), checked = (NS.logFilter.class or "ALL") == "ALL",
+      func = function() NS.SetLogClassFilter("ALL") end } }
   for _, classFile in ipairs(CLASS_ORDER) do
     local cf = classFile
     menu[#menu + 1] = { text = ClassLabel(cf), checked = NS.logFilter.class == cf, notCheckable = false,
-      func = function() NS.SetLogClassFilter(cf) RefreshClassButton() end }
+      func = function() NS.SetLogClassFilter(cf) end }
   end
   EasyMenu(menu, LFGAlertClassMenu, "cursor", 0, 0, "MENU")
 end
@@ -533,12 +801,12 @@ end
 local function ShowKeyMenu(anchor)
   if MenuUtil and MenuUtil.CreateContextMenu then
     MenuUtil.CreateContextMenu(anchor, function(_, root)
-      root:CreateTitle("Minimum key level")
+      root:CreateTitle(l("key_filter_title", "Minimum key level"))
       for _, kv in ipairs(KEY_OPTIONS) do
-        local label = kv == 0 and "All Keys" or ("Minimum +" .. kv)
+        local label = kv == 0 and l("all_keys", "All Keys") or l("min_key_fmt", "Minimum +%d"):format(kv)
         root:CreateCheckbox(label,
           function() return (NS.logFilter.minKey or 0) == kv end,
-          function() NS.SetLogMinKey(kv) RefreshKeyButton() end)
+          function() NS.SetLogMinKey(kv) end)
       end
     end)
     return
@@ -546,11 +814,11 @@ local function ShowKeyMenu(anchor)
   if not LFGAlertKeyMenu then
     CreateFrame("Frame", "LFGAlertKeyMenu", UIParent, "UIDropDownMenuTemplate")
   end
-  local menu = { { text = "Minimum key level", isTitle = true, notCheckable = true } }
+  local menu = { { text = l("key_filter_title", "Minimum key level"), isTitle = true, notCheckable = true } }
   for _, kv in ipairs(KEY_OPTIONS) do
-    local label = kv == 0 and "All Keys" or ("Minimum +" .. kv)
+    local label = kv == 0 and l("all_keys", "All Keys") or l("min_key_fmt", "Minimum +%d"):format(kv)
     menu[#menu + 1] = { text = label, checked = (NS.logFilter.minKey or 0) == kv, notCheckable = false,
-      func = function() NS.SetLogMinKey(kv) RefreshKeyButton() end }
+      func = function() NS.SetLogMinKey(kv) end }
   end
   EasyMenu(menu, LFGAlertKeyMenu, "cursor", 0, 0, "MENU")
 end
@@ -558,11 +826,10 @@ end
 local function ShowFilterMenu(anchor)
   if MenuUtil and MenuUtil.CreateContextMenu then
     MenuUtil.CreateContextMenu(anchor, function(_, root)
-      root:CreateTitle("Filter by status")
+      root:CreateTitle(l("status_filter_title", "Filter by status"))
       for _, o in ipairs(FILTER_OPTIONS) do
         root:CreateCheckbox(o.label, function() return NS.logFilter.status == o.key end, function()
           NS.SetLogFilter(o.key)
-          RefreshFilterButton()
         end)
       end
     end)
@@ -571,107 +838,69 @@ local function ShowFilterMenu(anchor)
   if not LFGAlertFilterMenu then
     CreateFrame("Frame", "LFGAlertFilterMenu", UIParent, "UIDropDownMenuTemplate")
   end
-  local menu = { { text = "Filter by status", isTitle = true, notCheckable = true } }
+  local menu = { { text = l("status_filter_title", "Filter by status"), isTitle = true, notCheckable = true } }
   for _, o in ipairs(FILTER_OPTIONS) do
     menu[#menu + 1] = { text = o.label, checked = NS.logFilter.status == o.key, notCheckable = false,
-      func = function() NS.SetLogFilter(o.key) RefreshFilterButton() end }
+      func = function() NS.SetLogFilter(o.key) end }
   end
   EasyMenu(menu, LFGAlertFilterMenu, "cursor", 0, 0, "MENU")
 end
 
-function NS.LogPageDelta(d)
-  NS.logPage = (NS.logPage or 1) + (d or 0)
-  NS.RefreshLogUI()
-end
+-- ---------------------------------------------------------------------------
+-- Full refresh: rebuild view + labels, then render rows.
+-- ---------------------------------------------------------------------------
 
-function NS.RefreshLogUI()
-  if not logFrame or not listContainer then return end
-  local log = (NS.db and NS.db.log) or {}
-  -- Build filtered view first (oldest->newest), then display newest first.
-  local view = {}
-  for i = 1, #log do
-    if EntryMatches(log[i]) then view[#view + 1] = log[i] end
-  end
+RefreshNow = function()
+  if not (logFrame and scrollFrame) then return end
+  BuildView()
   local n = #view
-  -- Paging (page 1 = newest). New arrivals jump back to page 1.
-  if n > (NS._lastTotal or 0) then NS.logPage = 1 end
-  NS._lastTotal = n
-  local pages = math.max(1, math.ceil(n / PAGE_SIZE))
-  NS.logPage = math.min(math.max(NS.logPage or 1, 1), pages)
-  local skip = (NS.logPage - 1) * PAGE_SIZE -- newest entries skipped
+  local log = (NS.db and NS.db.log) or {}
   if countLabel then
     local total = #log
     local suffix = ""
-    if NS.logFilter.status ~= "ALL" then suffix = suffix .. "  •  filter: " .. FilterLabel(NS.logFilter.status) end
+    if NS.logFilter.status ~= "ALL" then suffix = suffix .. "  •  " .. FilterLabel(NS.logFilter.status) end
     if (NS.logFilter.class or "ALL") ~= "ALL" then
       local cf = NS.logFilter.class
       suffix = suffix .. "  •  " .. ((LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[cf]) or cf)
     end
-    if (NS.logFilter.minKey or 0) > 0 then suffix = suffix .. "  •  key " .. KeyLabel(NS.logFilter.minKey) end
-    if NS.logFilter.query ~= "" then suffix = suffix .. "  •  search: \"" .. NS.logFilter.query .. "\"" end
+    if (NS.logFilter.minKey or 0) > 0 then suffix = suffix .. "  •  " .. KeyLabel(NS.logFilter.minKey) end
+    if NS.logFilter.query ~= "" then suffix = suffix .. "  •  \"" .. NS.logFilter.query .. "\"" end
     if NS.db and (NS.db.minIlvl > 0 or NS.db.minScore > 0) then
-      suffix = suffix .. string.format("  •  ★ needs ilvl %s / M+ %s",
+      suffix = suffix .. string.format("  •  ★ %s / %s",
         NS.db.minIlvl > 0 and tostring(NS.db.minIlvl) or "-",
         NS.db.minScore > 0 and tostring(NS.db.minScore) or "-")
     end
-    countLabel:SetText(n .. " of " .. total .. " entries" .. suffix .. string.format("  •  Page %d/%d", NS.logPage, pages))
+    countLabel:SetText(l("entries_fmt", "%d of %d entries"):format(n, total) .. suffix)
   end
-  if prevBtn then prevBtn:SetEnabled(NS.logPage > 1) end
-  if nextBtn then nextBtn:SetEnabled(NS.logPage < pages) end
-  RefreshFilterButton()
-  RefreshClassButton()
-  RefreshKeyButton()
-  for i = 1, PAGE_SIZE do
-    local row = rows[i]
-    local entry = view[n - skip - i + 1]
-    if not row then break end
-    if entry then
-      row:Show()
-      row.entry = entry
-      local tr, tg, tb, ta = 0.2, 0.2, 0.2, 0.12
-      if not entry.separator then
-        tr, tg, tb = StatusTint(entry.status)
-        ta = 0.22
-      end
-      row.stripe:SetColorTexture(tr, tg, tb, ta)
-      local hasID = entry.applicantID and entry.applicantID ~= 0 and true or false
-      row.act[1]:SetShown(not entry.separator)
-      row.act[2]:SetShown(not entry.separator)
-      row.act[3]:SetShown(not entry.separator and hasID)
-      if entry.separator then
-        for _, c in ipairs(COLS) do
-          row.cols[c.key]:SetText(c.key == "name" and entry.separator or "")
-        end
-      else
-        local okR, vals = pcall(EntryColumns, entry)
-        if okR and vals then
-          for _, c in ipairs(COLS) do
-            row.cols[c.key]:SetText(vals[c.key] or "")
-          end
-        else
-          NS._lastRenderError = tostring(vals)
-          for _, c in ipairs(COLS) do
-            row.cols[c.key]:SetText(c.key == "name" and "|cffff5555Render error — /lfgalert debug|r" or "")
-          end
-        end
-      end
-    else
-      row:Hide()
-      row.entry = nil
-    end
+  RefreshFilterButtons()
+  RefreshHeaderWidgets()
+  -- New arrivals snap to top only if the user is already near the top,
+  -- so reading history is never yanked around.
+  local sb = GetScrollBar()
+  if n > lastN and sb and sb:GetValue() <= ROW_HEIGHT * 2 then
+    if sb.SetValue then sb:SetValue(0) end
+  elseif n < lastN and sb and sb.SetValue then
+    sb:SetValue(0)
   end
-  -- Empty state: say WHY it's empty (no data vs. filter hiding everything).
-  if n == 0 and rows[1] then
-    local r = rows[1]
-    r:Show()
-    r.entry = nil
-    local hint = (#log == 0)
-      and "No applicants logged yet — new queues will appear here"
-      or "No match — set Filter: All and clear the search box"
-    for _, c in ipairs(COLS) do
-      r.cols[c.key]:SetText(c.key == "name" and ("|cffaaaaaa" .. hint .. "|r") or "")
-    end
+  lastN = n
+  RenderRows()
+end
+
+-- Public refresh. Coalesces bursts (several applicants arriving at once
+-- render once); pass force=true for immediate user-facing updates.
+function NS.RefreshLogUI(force)
+  if not logFrame then return end
+  if force then
+    refreshQueued = false
+    RefreshNow()
+    return
   end
+  if refreshQueued then return end
+  refreshQueued = true
+  C_Timer.After(0.1, function()
+    refreshQueued = false
+    if logFrame then RefreshNow() end
+  end)
 end
 
 -- Snapshot for /lfgalert debug.
@@ -680,13 +909,17 @@ function NS.GetLogUIState()
   for _, r in ipairs(rows) do
     if r:IsShown() then vis = vis + 1 end
   end
-  return { built = logFrame ~= nil, shown = logFrame and logFrame:IsShown() or false, visibleRows = vis }
+  return {
+    built = logFrame ~= nil,
+    shown = logFrame and logFrame:IsShown() or false,
+    visibleRows = vis,
+    scrollOffset = (scrollFrame and FauxScrollFrame_GetOffset(scrollFrame)) or 0,
+  }
 end
 
--- Live render probe for /lfgalert debug: row pool, first row state,
--- and a direct EntryColumns test on the newest stored entry.
+-- Live render probe for /lfgalert debug.
 function NS.ProbeLogUI()
-  local p = { pool = #rows, built = NS._rowsBuilt or 0, page = NS.logPage or 1 }
+  local p = { pool = #rows, built = NS._rowsBuilt or 0 }
   local r1 = rows[1]
   p.r1 = (r1 ~= nil)
   if r1 then
@@ -716,12 +949,10 @@ function NS.ProbeLogUI()
       end
     end
   end
-  -- Container geometry (paged plain list, no scrollframe).
-  p.contH = (listContainer and math.floor(listContainer:GetHeight() or 0)) or -1
-  p.contW = (listContainer and math.floor(listContainer:GetWidth() or 0)) or -1
-  -- IsVisible (not IsShown): false here with IsShown true = hidden ancestor.
+  p.contH = (listArea and math.floor(listArea:GetHeight() or 0)) or -1
+  p.contW = (listArea and math.floor(listArea:GetWidth() or 0)) or -1
   p.frameVis = logFrame and logFrame:IsVisible() or false
-  p.contVis = listContainer and listContainer:IsVisible() or false
+  p.contVis = listArea and listArea:IsVisible() or false
   if r1 then
     p.r1vis = r1:IsVisible()
     p.r1w = math.floor(r1:GetWidth() or -1)
@@ -739,195 +970,292 @@ end
 
 function NS.ToggleLogUI(force)
   if not logFrame then NS.BuildLogUI() end
-  local wasShown = logFrame:IsShown()
-  if force == true then logFrame:Show()
-  elseif force == false then logFrame:Hide()
+  if force == true then
+    logFrame:Show()
+  elseif force == false then
+    logFrame:Hide()
   else
     if logFrame:IsShown() then logFrame:Hide() else logFrame:Show() end
   end
-  -- Newest-first list: always open on page 1.
-  if logFrame:IsShown() and not wasShown then NS.logPage = 1 end
-  NS.RefreshLogUI()
+  NS.RefreshLogUI(true)
 end
+
+-- ---------------------------------------------------------------------------
+-- Window position / size / scale persistence
+-- ---------------------------------------------------------------------------
+
+local function DBUI()
+  NS.db.ui = NS.db.ui or {}
+  return NS.db.ui
+end
+
+local function SaveUIPos()
+  if not (logFrame and uiReady) then return end
+  local x, y = logFrame:GetCenter()
+  local ui = DBUI()
+  ui.x, ui.y = x, y
+end
+
+local function SaveUISize()
+  if not (logFrame and uiReady) then return end
+  local ui = DBUI()
+  ui.w, ui.h = logFrame:GetSize()
+end
+
+function NS.SetUIScale(v)
+  v = math.min(1.5, math.max(0.6, tonumber(v) or 1))
+  local ui = DBUI()
+  ui.scale = v
+  if logFrame then logFrame:SetScale(v) end
+end
+
+function NS.ResetUI()
+  if NS.db then NS.db.ui = nil end
+  if logFrame then
+    logFrame:ClearAllPoints()
+    logFrame:SetPoint("CENTER")
+    logFrame:SetSize(DEFAULT_W, DEFAULT_H)
+    logFrame:SetScale(1)
+    NS.RefreshLogUI(true)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Window construction
+-- ---------------------------------------------------------------------------
 
 function NS.BuildLogUI()
   if logFrame then return end
-  local template = BackdropTemplateMixin and "BackdropTemplate" or nil
-  logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, template)
-  logFrame:SetSize(FRAME_W, FRAME_H)
-  logFrame:SetPoint("CENTER")
-  logFrame:SetMovable(true)
-  logFrame:EnableMouse(true)
-  logFrame:RegisterForDrag("LeftButton")
-  logFrame:SetScript("OnDragStart", logFrame.StartMoving)
-  logFrame:SetScript("OnDragStop", logFrame.StopMovingOrSizing)
-  logFrame:SetClampedToScreen(true)
-  if logFrame.SetBackdrop then
-    logFrame:SetBackdrop({
-      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-      tile = true, tileSize = 32, edgeSize = 32,
-      insets = { left = 8, right = 8, top = 8, bottom = 8 },
-    })
-    -- Group-Finder chrome: dark navy + gold border.
-    logFrame:SetBackdropColor(0.04, 0.06, 0.12, 0.96)
-    logFrame:SetBackdropBorderColor(0.85, 0.68, 0.3, 1)
+
+  logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, "BasicFrameTemplateWithInset")
+  if logFrame.SetTitle then
+    pcall(logFrame.SetTitle, logFrame, l("log_title", "LFGAlert Applicant Log"))
+  end
+  if logFrame.TitleText then
+    logFrame.TitleText:SetText(l("log_title", "LFGAlert Applicant Log"))
   end
 
-  local bell = logFrame:CreateTexture(nil, "OVERLAY")
-  bell:SetSize(26, 26)
-  bell:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -10)
-  bell:SetTexture("Interface\\Icons\\INV_Misc_Bell_01")
+  local ui = NS.db.ui or {}
+  local w = tonumber(ui.w) or DEFAULT_W
+  local h = tonumber(ui.h) or DEFAULT_H
+  w = math.min(MAX_W, math.max(MIN_W, w))
+  h = math.min(MAX_H, math.max(MIN_H, h))
+  logFrame:SetSize(w, h)
+  logFrame:SetScale(math.min(1.5, math.max(0.6, tonumber(ui.scale) or 1)))
+  if tonumber(ui.x) and tonumber(ui.y) then
+    logFrame:SetPoint("CENTER", UIParent, "CENTER", ui.x, ui.y)
+  else
+    logFrame:SetPoint("CENTER")
+  end
+  logFrame:EnableMouse(true) -- stop clicks falling through to the world
+  logFrame:SetMovable(true)
+  logFrame:SetResizable(true)
+  logFrame:SetMinResize(MIN_W, MIN_H)
+  logFrame:SetMaxResize(MAX_W, MAX_H)
+  logFrame:SetClampedToScreen(true)
+  logFrame:SetFrameStrata("HIGH")
+  tinsert(UISpecialFrames, "LFGAlertLogFrame") -- Esc closes the window
 
-  local title = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  title:SetPoint("LEFT", bell, "RIGHT", 8, 0)
-  title:SetText("LFGAlert Applicant Log")
-  title:SetTextColor(1, 0.82, 0)
+  -- Drag strip over the title area (created first so later controls sit above).
+  -- RegisterForDrag captures the gesture: releasing outside the frame still
+  -- fires OnDragStop, so the window can never get "stuck" to the cursor.
+  local dragArea = CreateFrame("Frame", nil, logFrame)
+  dragArea:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 8, -6)
+  dragArea:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -44, -6)
+  dragArea:SetHeight(30)
+  dragArea:EnableMouse(true)
+  dragArea:RegisterForDrag("LeftButton")
+  dragArea:SetScript("OnDragStart", function() logFrame:StartMoving() end)
+  dragArea:SetScript("OnDragStop", function()
+    logFrame:StopMovingOrSizing()
+    SaveUIPos()
+  end)
+  dragArea:SetScript("OnHide", function()
+    pcall(logFrame.StopMovingOrSizing, logFrame)
+    SaveUIPos()
+  end)
 
-  local sub = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  sub:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 50, -40)
-  sub:SetText("Role  •  Spec  •  Key  •  iLvl  •  M+ score (RIO if installed)")
-  sub:SetTextColor(0.7, 0.7, 0.7)
+  -- Resizer, bottom-right corner.
+  local resizer = CreateFrame("Button", nil, logFrame)
+  resizer:SetSize(16, 16)
+  resizer:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -5, 5)
+  resizer:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-Size-BigRight")
+  resizer:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-Size-BigRight", "ADD")
+  resizer:SetScript("OnMouseDown", function() logFrame:StartSizing("BOTTOMRIGHT") end)
+  resizer:SetScript("OnMouseUp", function()
+    logFrame:StopMovingOrSizing()
+    SaveUISize()
+  end)
 
-  local close = CreateFrame("Button", nil, logFrame, "UIPanelCloseButton")
-  close:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -4, -4)
-
-  local clear = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
-  clear:SetSize(90, 22)
-  clear:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -32, -34)
-  clear:SetText("Clear Log")
-  if clear.Text then clear.Text:SetTextColor(1, 0.4, 0.35) end
-  clear:SetScript("OnClick", function() NS.ClearLog() end)
-
-  local test = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
-  test:SetSize(80, 22)
-  test:SetPoint("RIGHT", clear, "LEFT", -6, 0)
-  test:SetText("Test sound")
-  test:SetScript("OnClick", function() NS.PlayAlertSound() end)
-
-  countLabel = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  countLabel:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -36, -62)
-  countLabel:SetJustifyH("RIGHT")
-  countLabel:SetTextColor(0.8, 0.8, 0.8)
-
-  -- Filter + search bar: search box + Status / Class / Key dropdowns.
+  -- Search + filter bar.
   searchBox = CreateFrame("EditBox", nil, logFrame, "SearchBoxTemplate")
   searchBox:SetSize(160, 22)
-  searchBox:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 14, -62)
+  searchBox:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 14, -34)
   searchBox:SetAutoFocus(false)
   searchBox:SetMaxLetters(60)
   searchBox:SetScript("OnTextChanged", function(self)
     NS.logFilter.query = (self:GetText() or ""):lower()
-    NS.RefreshLogUI()
+    NS.RefreshLogUI(true)
   end)
   searchBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
   searchBox:SetScript("OnEscapePressed", function(self) self:SetText("") self:ClearFocus() end)
-  -- SearchBoxTemplate shows its own clear button; add hint text if supported.
   if searchBox.Instructions then
-    searchBox.Instructions:SetText("Search...")
+    searchBox.Instructions:SetText(l("search_hint", "Search..."))
   end
 
   local function DropLabel(text, x, w)
     local fs = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    fs:SetPoint("LEFT", logFrame, "TOPLEFT", x, -73)
+    fs:SetPoint("LEFT", logFrame, "TOPLEFT", x, -45)
     fs:SetWidth(w)
     fs:SetJustifyH("LEFT")
     fs:SetText(text)
     fs:SetTextColor(1, 0.82, 0)
   end
 
-  DropLabel("Status:", 184, 42)
+  DropLabel(l("f_status", "Status:") .. " ", 184, 42)
   filterButton = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
   filterButton:SetSize(100, 22)
-  filterButton:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 228, -62)
-  filterButton:SetText("Status: All")
+  filterButton:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 228, -34)
+  filterButton:SetText(l("fmt_status_btn", "Status: %s"):format(l("filter_all", "All")))
   filterButton:SetScript("OnClick", function(self) ShowFilterMenu(self) end)
 
-  DropLabel("Class:", 336, 38)
+  DropLabel(l("f_class", "Class:") .. " ", 336, 38)
   classBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
   classBtn:SetSize(110, 22)
-  classBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 376, -62)
-  classBtn:SetText("Class: All")
+  classBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 376, -34)
+  classBtn:SetText(l("fmt_class_btn", "Class: %s"):format(l("filter_all", "All")))
   classBtn:SetScript("OnClick", function(self) ShowClassMenu(self) end)
 
-  DropLabel("Key:", 494, 30)
+  DropLabel(l("f_key", "Key:") .. " ", 494, 30)
   keyBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
   keyBtn:SetSize(80, 22)
-  keyBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 526, -62)
-  keyBtn:SetText("Key: All")
+  keyBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 526, -34)
+  keyBtn:SetText(l("fmt_key_btn", "Key: %s"):format(l("filter_all", "All")))
   keyBtn:SetScript("OnClick", function(self) ShowKeyMenu(self) end)
 
-  -- Header row: same insets + same COLS spec as every data row, so each
-  -- heading sits exactly above its values.
+  -- Header row: same insets + same COLS spec as every data row. Sortable
+  -- columns are buttons; the active sort shows an arrow.
   local headerFrame = CreateFrame("Frame", nil, logFrame)
-  headerFrame:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -88)
-  headerFrame:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -32, -88)
-  headerFrame:SetHeight(14)
+  headerFrame:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -60)
+  headerFrame:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -12, -60)
+  headerFrame:SetHeight(16)
   do
     local x = 4 + 2
     for _, c in ipairs(COLS) do
-      local fs = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-      fs:SetJustifyH(c.justify)
-      fs:SetWordWrap(false)
-      fs:SetTextColor(1, 0.82, 0)
-      fs:SetText(c.label)
-      if c.key == "note" then
-        fs:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
-        fs:SetPoint("RIGHT", headerFrame, "RIGHT", -2, 0)
+      local widget
+      if c.sort then
+        local btn = CreateFrame("Button", nil, headerFrame)
+        btn:SetNormalFontObject("GameFontNormalSmall")
+        btn:SetHighlightFontObject("GameFontHighlightSmall")
+        btn:SetText(c.label)
+        local fs = btn:GetFontString()
+        if fs then
+          fs:SetJustifyH(c.justify)
+          fs:SetWordWrap(false)
+        end
+        btn.label = c.label
+        btn.colKey = c.key
+        btn:SetScript("OnClick", function() ToggleSort(c.key) end)
+        widget = btn
       else
-        fs:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
-        fs:SetWidth(c.width)
+        local fs = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetJustifyH(c.justify)
+        fs:SetWordWrap(false)
+        fs:SetTextColor(1, 0.82, 0)
+        fs:SetText(c.label)
+        widget = fs
+      end
+      if c.key == "note" then
+        widget:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
+        widget:SetPoint("RIGHT", headerFrame, "RIGHT", -2, 0)
+      elseif c.key == "name" then
+        -- Indent header text past the class-icon strip so it sits over names.
+        widget:SetPoint("LEFT", headerFrame, "LEFT", x + NAME_ICON_W, 0)
+        widget:SetWidth(c.width)
+        x = x + c.width + NAME_ICON_W + ROW_GAP
+      else
+        widget:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
+        widget:SetWidth(c.width)
         x = x + c.width + ROW_GAP
       end
+      headerWidgets[c.key] = widget
     end
   end
 
   local sep = logFrame:CreateTexture(nil, "ARTWORK")
   sep:SetColorTexture(1, 1, 1, 0.15)
   sep:SetHeight(1)
-  sep:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -104)
-  sep:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -36, -104)
+  sep:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -78)
+  sep:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -36, -78)
 
-  -- Plain list container (deliberately NOT a ScrollFrame): rows parented
-  -- here paint 1:1 with no viewport, clipping, or scrollbar state involved.
-  listContainer = CreateFrame("Frame", nil, logFrame)
-  listContainer:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -108)
-  listContainer:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -32, 30)
-  listContainer:EnableMouse(true)
-  listContainer:SetScript("OnMouseWheel", function(_, delta)
-    NS.LogPageDelta(delta > 0 and -1 or 1)
+  -- List area with faux scroll frame: fixed visible row pool re-rendered
+  -- from the scroll offset (the standard light-weight scroll list pattern).
+  listArea = CreateFrame("Frame", nil, logFrame)
+  listArea:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -82)
+  listArea:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -12, 34)
+  listArea:EnableMouse(true)
+  listArea:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta) end)
+
+  scrollFrame = CreateFrame("ScrollFrame", "LFGAlertLogScroll", listArea, "FauxScrollFrameTemplate")
+  scrollFrame:SetPoint("TOPLEFT", listArea, "TOPLEFT", 0, 0)
+  scrollFrame:SetPoint("BOTTOMRIGHT", listArea, "BOTTOMRIGHT", -SCROLL_ZONE, 0)
+  do
+    local sb = scrollFrame.scrollBar or scrollFrame.ScrollBar or _G["LFGAlertLogScrollBar"]
+    if sb then
+      scrollFrame.scrollBar = sb -- modern FauxScrollFrame_Update reads this
+      sb:ClearAllPoints()
+      sb:SetPoint("TOPLEFT", listArea, "TOPRIGHT", 2, -14)
+      sb:SetPoint("BOTTOMLEFT", listArea, "BOTTOMRIGHT", 2, 12)
+    end
+  end
+  scrollFrame:SetScript("OnVerticalScroll", function(self, offset)
+    if FauxScrollFrame_OnVerticalScroll then
+      pcall(FauxScrollFrame_OnVerticalScroll, self, offset, ROW_HEIGHT, RenderRows)
+    end
+    RenderRows()
+  end)
+
+  -- Footer: reset-filters (left) + hint (bottom center) + entry count (right)
+  -- + clear/test buttons (right).
+  resetFiltersBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
+  resetFiltersBtn:SetSize(110, 22)
+  resetFiltersBtn:SetPoint("BOTTOMLEFT", logFrame, "BOTTOMLEFT", 14, 10)
+  resetFiltersBtn:SetText(l("btn_reset_filters", "Reset Filters"))
+  resetFiltersBtn:SetScript("OnClick", function() NS.ResetLogFilters() end)
+  resetFiltersBtn:Hide()
+
+  local test = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
+  test:SetSize(80, 22)
+  test:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -110, 10)
+  test:SetText(l("btn_test_sound", "Test sound"))
+  test:SetScript("OnClick", function() NS.PlayAlertSound() end)
+
+  local clear = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
+  clear:SetSize(90, 22)
+  clear:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -14, 10)
+  clear:SetText(l("btn_clear_log", "Clear Log"))
+  if clear.Text then clear.Text:SetTextColor(1, 0.4, 0.35) end
+  clear:SetScript("OnClick", function() NS.ClearLog() end)
+
+  countLabel = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  countLabel:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -16, 36)
+  countLabel:SetJustifyH("RIGHT")
+  countLabel:SetTextColor(0.8, 0.8, 0.8)
+
+  local hint = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  hint:SetPoint("BOTTOM", logFrame, "BOTTOM", 0, 1)
+  hint:SetText(l("footer_hint", "Left-click: select  •  Right-click: whisper / invite / decline  •  Scroll: browse  •  Click a column header to sort"))
+  hint:SetTextColor(0.55, 0.55, 0.55)
+
+  -- Re-render + remember size whenever the user resizes the window.
+  logFrame:HookScript("OnSizeChanged", function()
+    if not uiReady then return end
+    SaveUISize()
+    NS.RefreshLogUI(true)
   end)
 
   NS._rowsBuilt, NS._rowBuildError = 0, nil
-  for i = 1, PAGE_SIZE do
-    local ok, row = pcall(MakeRow, listContainer, i)
-    if ok and row then
-      rows[i] = row
-      NS._rowsBuilt = NS._rowsBuilt + 1
-    else
-      NS._rowBuildError = "row " .. i .. ": " .. tostring(row)
-      break
-    end
-  end
-
-  prevBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
-  prevBtn:SetSize(90, 22)
-  prevBtn:SetPoint("BOTTOMLEFT", logFrame, "BOTTOMLEFT", 14, 12)
-  prevBtn:SetText("< Newer")
-  prevBtn:SetScript("OnClick", function() NS.LogPageDelta(-1) end)
-
-  nextBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
-  nextBtn:SetSize(90, 22)
-  nextBtn:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -14, 12)
-  nextBtn:SetText("Older >")
-  nextBtn:SetScript("OnClick", function() NS.LogPageDelta(1) end)
-
-  -- Slash shortcut hint
-  local hint = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  hint:SetPoint("BOTTOM", logFrame, "BOTTOM", 0, 14)
-  hint:SetText("Left-click whisper  •  Right-click invite/decline  •  /lfgalert filter <status>")
-  hint:SetTextColor(0.55, 0.55, 0.55)
-
+  uiReady = true
   logFrame:Hide()
-  NS.RefreshLogUI()
+  NS.RefreshLogUI(true)
 end

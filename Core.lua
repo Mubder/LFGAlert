@@ -11,7 +11,9 @@
 local ADDON_NAME = ...
 LFGAlert = LFGAlert or {}
 local NS = LFGAlert
-NS.BUILD = 14 -- bump every shipment; shown in load message + /lfgalert debug
+local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
+local function l(key, fallback) return L[key] or fallback end
+NS.BUILD = 15 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -108,6 +110,7 @@ local function ClassColorize(classFileName, text)
   end
   return text
 end
+NS.ClassColorize = ClassColorize
 
 local function GetSpecName(specID)
   if not specID or specID == 0 then return nil end
@@ -117,20 +120,26 @@ local function GetSpecName(specID)
 end
 
 -- Try Raider.IO addon if present. Different RIO versions expose different APIs,
--- so probe carefully and never error.
-local function GetRaiderIOScore(fullName)
+-- so probe carefully and never error. Pass a memo table to avoid re-probing the
+-- same name many times within one scan (group applications multiply this).
+local function GetRaiderIOScore(fullName, memo)
   if not fullName or not _G.RaiderIO then return nil end
+  if memo then
+    local cached = memo[fullName]
+    if cached ~= nil then return cached or nil end
+  end
+  local score
   local RIO = _G.RaiderIO
   -- Modern RIO: RaiderIO.GetScore(unitName)
   if type(RIO.GetScore) == "function" then
     local ok, s1, s2 = pcall(RIO.GetScore, fullName)
     if ok then
-      if type(s1) == "number" and s1 > 0 then return math.floor(s1) end
-      if type(s2) == "number" and s2 > 0 then return math.floor(s2) end
+      if type(s1) == "number" and s1 > 0 then score = math.floor(s1) end
+      if not score and type(s2) == "number" and s2 > 0 then score = math.floor(s2) end
     end
   end
   -- Older RIO: RaiderIO.GetProfile(name, realm)
-  if type(RIO.GetProfile) == "function" then
+  if not score and type(RIO.GetProfile) == "function" then
     local bare, realm = strsplit("-", fullName, 2)
     local ok, profile = pcall(RIO.GetProfile, bare, realm or GetRealmName())
     if ok and type(profile) == "table" then
@@ -138,13 +147,14 @@ local function GetRaiderIOScore(fullName)
         and profile.mythicPlusScoresBySeason[1]
         and profile.mythicPlusScoresBySeason[1].scores
         and profile.mythicPlusScoresBySeason[1].scores.all
-      if type(s) == "number" and s > 0 then return math.floor(s) end
-      if type(profile.mplusCurrentScore) == "number" and profile.mplusCurrentScore > 0 then
-        return math.floor(profile.mplusCurrentScore)
+      if type(s) == "number" and s > 0 then score = math.floor(s) end
+      if not score and type(profile.mplusCurrentScore) == "number" and profile.mplusCurrentScore > 0 then
+        score = math.floor(profile.mplusCurrentScore)
       end
     end
   end
-  return nil
+  if memo then memo[fullName] = score or false end
+  return score
 end
 
 local function FormatScore(blizzScore, rioScore)
@@ -272,11 +282,16 @@ end
 local known = {}
 NS._known = known
 -- Listing session: applicantIDs reset on every delist/relist, so stamp entries
--- to never mix data across listings.
+-- to never mix data across listings. The UI uses this to refuse acting on
+-- stale applicantIDs from previous listings (they can be reused by Blizzard).
 local listingSession = 1
 local hadListing = false
 
-local function SnapshotApplicant(applicantID)
+function NS.CurrentListingSession()
+  return listingSession
+end
+
+local function SnapshotApplicant(applicantID, cachedListing, rioMemo)
   local infoOk, appInfo = pcall(C_LFGList.GetApplicantInfo, applicantID)
   if not infoOk or not appInfo then return nil end
 
@@ -294,7 +309,7 @@ local function SnapshotApplicant(applicantID)
       -- Group applications sometimes return garbage specIDs; only accept sane ones.
       local saneSpec = (type(specID) == "number" and specID > 0 and specID < 10000) and specID or 0
       local specName = GetSpecName(saneSpec)
-      local rio = GetRaiderIOScore(name)
+      local rio = GetRaiderIOScore(name, rioMemo)
       members[#members + 1] = {
         name = name, -- "Name-Realm"
         class = class, -- "WARRIOR"
@@ -317,7 +332,9 @@ local function SnapshotApplicant(applicantID)
     comment = CleanKString(appInfo.comment) or "",
     isNew = appInfo.isNew,
     members = members,
-    listing = NS.CurrentListingInfo(),
+    -- Same listing applies to every applicant in one scan: pass it in to
+    -- avoid one GetActivityInfo/keystone lookup per applicant.
+    listing = cachedListing or NS.CurrentListingInfo(),
   }
 end
 
@@ -333,6 +350,7 @@ local function ShortName(fullName)
   local bare = strsplit("-", fullName, 2)
   return bare or fullName
 end
+NS.ShortName = ShortName
 
 local function MemberSummary(snap)
   local m = PrimaryMember(snap)
@@ -359,16 +377,16 @@ end
 -- ---------------------------------------------------------------------------
 
 local STATUS_META = {
-  applied        = { label = "QUEUED",    color = "ffd100" }, -- gold
-  invited        = { label = "INVITED",   color = "5599ff" }, -- blue
-  inviteaccepted = { label = "ACCEPTED",  color = "33cc33" }, -- green
-  declined       = { label = "DECLINED",  color = "ff4444" },
-  declined_full  = { label = "DECLINED (FULL)", color = "ff4444" },
-  declined_delisted = { label = "DECLINED (DELISTED)", color = "ff4444" },
-  cancelled      = { label = "CANCELLED", color = "999999" },
-  timedout       = { label = "TIMEOUT",   color = "ff8800" },
-  failed         = { label = "FAILED",    color = "ff4444" },
-  invitedeclined = { label = "DECLINED INVITE", color = "ff8844" },
+  applied        = { label = l("st_applied", "QUEUED"),    color = "ffd100" }, -- gold
+  invited        = { label = l("st_invited", "INVITED"),   color = "5599ff" }, -- blue
+  inviteaccepted = { label = l("st_inviteaccepted", "ACCEPTED"),  color = "33cc33" }, -- green
+  declined       = { label = l("st_declined", "DECLINED"), color = "ff4444" },
+  declined_full  = { label = l("st_declined_full", "DECLINED (FULL)"), color = "ff4444" },
+  declined_delisted = { label = l("st_declined_delisted", "DECLINED (DELISTED)"), color = "ff4444" },
+  cancelled      = { label = l("st_cancelled", "CANCELLED"), color = "999999" },
+  timedout       = { label = l("st_timedout", "TIMEOUT"),   color = "ff8800" },
+  failed         = { label = l("st_failed", "FAILED"),      color = "ff4444" },
+  invitedeclined = { label = l("st_invitedeclined", "DECLINED INVITE"), color = "ff8844" },
 }
 
 function NS.StatusLabel(status)
@@ -397,11 +415,11 @@ function NS.RoleTag(role)
   local key = role and (role .. ""):upper() or ""
   local label, color, iconKey = "—", "aaaaaa", nil
   if key == "TANK" then
-    label, color, iconKey = "Tank", "5b9bff", "INLINE_TANK_ICON"
+    label, color, iconKey = l("role_tank", "Tank"), "5b9bff", "INLINE_TANK_ICON"
   elseif key == "HEALER" then
-    label, color, iconKey = "Heal", "4dff4d", "INLINE_HEALER_ICON"
+    label, color, iconKey = l("role_healer", "Heal"), "4dff4d", "INLINE_HEALER_ICON"
   elseif key == "DAMAGER" then
-    label, color, iconKey = "DPS", "ff6b6b", "INLINE_DAMAGER_ICON"
+    label, color, iconKey = l("role_dps", "DPS"), "ff6b6b", "INLINE_DAMAGER_ICON"
   end
   local icon = (iconKey and _G[iconKey]) or ""
   if icon ~= "" then icon = icon .. " " end
@@ -505,21 +523,22 @@ local function StatLine(label, s)
   s = s or {}
   local q, a, d, au = s.queued or 0, s.accepted or 0, s.declined or 0, s.auto or 0
   local rate = q > 0 and math.floor(a / q * 100 + 0.5) or 0
-  return string.format("%s: %d queued • %d accepted (%d%%) • %d declined%s • %d invited • %d left",
-    label, q, a, rate, d + au, au > 0 and (" (" .. au .. " auto)") or "", s.invited or 0, s.gone or 0)
+  local autoTxt = au > 0 and l("stats_auto_paren", " (%d auto)"):format(au) or ""
+  return l("stats_line_fmt", "%s: %d queued • %d accepted (%d%%) • %d declined%s • %d invited • %d left")
+    :format(label, q, a, rate, d + au, autoTxt, s.invited or 0, s.gone or 0)
 end
 
 function NS.PrintStats()
   local st = EnsureStats()
   if not st then return end
-  print("|cffffcc00LFGAlert stats:|r")
+  print("|cffffcc00" .. l("stats_header", "LFGAlert stats:") .. "|r")
   local cur = st.sessions[listingSession]
   if cur and (cur.queued or 0) > 0 then
-    print("  " .. StatLine("This listing", cur))
+    print("  " .. StatLine(l("this_listing", "This listing"), cur))
   else
-    print("  This listing: no queues yet")
+    print("  " .. l("this_listing_none", "This listing: no queues yet"))
   end
-  print("  " .. StatLine("All time", st.total))
+  print("  " .. StatLine(l("all_time", "All time"), st.total))
   -- Accepted quality averages from stored log rows.
   local n, ilvlSum, scoreSum, scoreN = 0, 0, 0, 0
   for _, e in ipairs((NS.db and NS.db.log) or {}) do
@@ -532,8 +551,8 @@ function NS.PrintStats()
     end
   end
   if n > 0 then
-    local scTxt = scoreN > 0 and (" M+ " .. math.floor(scoreSum / scoreN + 0.5)) or ""
-    print(string.format("  Accepted avg (n=%d): ilvl %d%s", n, math.floor(ilvlSum / n + 0.5), scTxt))
+    local scTxt = scoreN > 0 and l("stats_avg_score", " M+ %d"):format(math.floor(scoreSum / scoreN + 0.5)) or ""
+    print(l("stats_avg_fmt", "  Accepted avg (n=%d): ilvl %d%s"):format(n, math.floor(ilvlSum / n + 0.5), scTxt))
   end
 end
 
@@ -591,8 +610,11 @@ function NS.PlayAlertSound()
   local channel = NS.db.useMasterChannel and "Master" or nil
   -- Custom sound file takes precedence when enabled and set.
   if NS.db.useCustomSound and NS.db.customSoundPath and NS.db.customSoundPath ~= "" then
-    local ok = pcall(PlaySoundFile, NS.db.customSoundPath, channel)
-    if ok then return end
+    local ok, played = pcall(PlaySoundFile, NS.db.customSoundPath, channel)
+    -- pcall only catches argument errors; PlaySoundFile's boolean return is
+    -- the real "did it play" signal (false = missing/invalid file). nil means
+    -- the client returned nothing: assume success so we never double-play.
+    if ok and played ~= false then return end
     -- Fall through to SoundKit ID if the file path failed.
   end
   local id = tonumber(NS.db.soundID) or 8959
@@ -650,17 +672,17 @@ function NS.AlertNewApplicant(applicantID, snap)
   if not SnapHasData(snap) then
     -- Details not ready yet: keep the sound + a generic banner now;
     -- BackfillLogEntry prints the full line + fills the log row on retry.
-    CenterMessage("New applicant!")
+    CenterMessage(l("alert_banner", "New applicant!"))
     return
   end
   local summary = MemberSummary(snap)
   local pm = PrimaryMember(snap)
   local name = pm and pm.name or ("#" .. tostring(applicantID))
   local _, rolePlain = NS.RoleTag(NS.ResolveRole(pm))
-  CenterMessage("New applicant: " .. ShortName(name) .. " (" .. rolePlain .. ")")
-  ChatMessage("New applicant: " .. summary)
+  CenterMessage(l("alert_center_fmt", "New applicant: %s (%s)"):format(ShortName(name), rolePlain))
+  ChatMessage(l("alert_chat_fmt", "New applicant: %s"):format(summary))
   if snap and snap.comment and snap.comment ~= "" then
-    ChatMessage("Note: \"" .. snap.comment .. "\"")
+    ChatMessage(l("note_fmt", 'Note: "%s"'):format(snap.comment))
   end
 end
 
@@ -691,9 +713,9 @@ local function BackfillLogEntry(applicantID, snap)
         end
         if e.status == "applied" and not e.detailShown then
           e.detailShown = true
-          ChatMessage("New applicant: " .. MemberSummary({ members = e.members, numMembers = e.numMembers, comment = e.comment, listing = snap.listing }))
+          ChatMessage(l("alert_chat_fmt", "New applicant: %s"):format(MemberSummary({ members = e.members, numMembers = e.numMembers, comment = e.comment, listing = snap.listing })))
           if e.comment and e.comment ~= "" then
-            ChatMessage("Note: \"" .. e.comment .. "\"")
+            ChatMessage(l("note_fmt", 'Note: "%s"'):format(e.comment))
           end
         end
         if e.status == "applied" then
@@ -740,17 +762,51 @@ function NS.MaybeAutoDecline(applicantID, snap)
   autoPending[applicantID] = true
   NS._autoReason = NS._autoReason or {}
   NS._autoReason[applicantID] = {
-    text = (ilvlFail and scoreFail) and "Low ILvl/M+" or (ilvlFail and "Low ILvl" or "Low M+"),
+    text = (ilvlFail and scoreFail) and l("ar_both", "Low ILvl/M+")
+      or (ilvlFail and l("ar_ilvl", "Low ILvl") or l("ar_score", "Low M+")),
     session = listingSession,
   }
   pcall(C_LFGList.DeclineApplicant, applicantID)
-  ChatMessage("Auto-declined " .. ShortName(m.name) .. " (" .. table.concat(reasons, ", ") .. ")")
+  ChatMessage(l("auto_declined_fmt", "Auto-declined %s (%s)"):format(ShortName(m.name), table.concat(reasons, ", ")))
   return true
 end
 
 -- ---------------------------------------------------------------------------
 -- Scanning
 -- ---------------------------------------------------------------------------
+
+-- Single funnel for "we just fetched a fresh snapshot of an applicant":
+-- both the full-list scan and the per-applicant event path call this, so
+-- new-applicant alerts, status-change logging and data backfill behave
+-- identically everywhere.
+local function HandleApplicantSnapshot(applicantID, snap, reason)
+  if not snap then return end
+  local prev = known[applicantID]
+  if not prev then
+    known[applicantID] = { status = snap.status, snap = snap }
+    NS.AddLogEntry(applicantID, nil, snap.status or "applied", snap, true)
+    if snap.status == "applied" then
+      NS.AlertNewApplicant(applicantID, snap)
+      NS.MaybeAutoDecline(applicantID, snap)
+    else
+      NS.AnnounceStatusChange(applicantID, nil, snap.status, snap)
+    end
+  elseif prev.status ~= snap.status then
+    local old = prev.status
+    known[applicantID] = { status = snap.status, snap = snap }
+    NS.AddLogEntry(applicantID, old, snap.status, snap, false)
+    NS.AnnounceStatusChange(applicantID, old, snap.status, snap)
+    -- Re-alert if they re-applied after cancel/decline
+    if snap.status == "applied" and reason == "list" then
+      NS.PlayAlertSound()
+    end
+  else
+    -- Same status: refresh snapshot (ilvl/score may have resolved late)
+    -- and fill any "?" log rows now that data is available.
+    prev.snap = snap
+    BackfillLogEntry(applicantID, snap)
+  end
+end
 
 local function ScanApplicants(reason, retryN)
   if not NS.db or not NS.db.enabled then return end
@@ -762,38 +818,17 @@ local function ScanApplicants(reason, retryN)
   local ok, ids = pcall(C_LFGList.GetApplicants)
   if not ok or type(ids) ~= "table" then return end
 
+  -- The listing is the same for every applicant in this scan: resolve it once
+  -- (activity-info + keystone lookups) instead of once per applicant.
+  local listing = NS.CurrentListingInfo()
+  local rioMemo = {}
+
   local missingData = false
-  local seen = {}
   for _, applicantID in ipairs(ids) do
-    seen[applicantID] = true
-    local snap = SnapshotApplicant(applicantID)
+    local snap = SnapshotApplicant(applicantID, listing, rioMemo)
     if snap then
       if not SnapHasData(snap) then missingData = true end
-      local prev = known[applicantID]
-      if not prev then
-        known[applicantID] = { status = snap.status, snap = snap }
-        NS.AddLogEntry(applicantID, nil, snap.status or "applied", snap, true)
-        if (snap.status == "applied") then
-          NS.AlertNewApplicant(applicantID, snap)
-          NS.MaybeAutoDecline(applicantID, snap)
-        else
-          NS.AnnounceStatusChange(applicantID, nil, snap.status, snap)
-        end
-      elseif prev.status ~= snap.status then
-        local old = prev.status
-        known[applicantID] = { status = snap.status, snap = snap }
-        NS.AddLogEntry(applicantID, old, snap.status, snap, false)
-        NS.AnnounceStatusChange(applicantID, old, snap.status, snap)
-        -- Re-alert if they re-applied after cancel/decline
-        if snap.status == "applied" and reason == "list" then
-          NS.PlayAlertSound()
-        end
-      else
-        -- Same status: refresh snapshot (ilvl/score may have resolved late)
-        -- and fill any "?" log rows now that data is available.
-        prev.snap = snap
-        BackfillLogEntry(applicantID, snap)
-      end
+      HandleApplicantSnapshot(applicantID, snap, reason)
     end
   end
 
@@ -818,7 +853,7 @@ function NS.WipeKnown(reasonLabel)
     local st = EnsureStats()
     local s = st and st.sessions[listingSession]
     if s and (s.queued or 0) > 0 then
-      ChatMessage(StatLine("Listing over", s))
+      ChatMessage(StatLine(l("listing_over", "Listing over"), s))
     end
   end
   wipe(known)
@@ -826,7 +861,7 @@ function NS.WipeKnown(reasonLabel)
   if NS._autoReason then wipe(NS._autoReason) end
   if reasonLabel and NS.db and NS.db.log then
     -- Visual separator in the log so sessions don't blur together.
-    NS.db.log[#NS.db.log + 1] = { t = time(), separator = reasonLabel }
+    NS.db.log[#NS.db.log + 1] = { t = time(), separator = l("sep_ended", "— listing ended —") }
     TrimLog()
     if NS.RefreshLogUI then NS.RefreshLogUI() end
   end
@@ -838,7 +873,15 @@ end
 --   PVEFrame_ShowFrame("GroupFinderFrame") + LFGListFrame_SetActivePanel(..., ApplicationViewer)
 -- ---------------------------------------------------------------------------
 
+local pendingOpenLFG = false
+
 function NS.OpenApplicants()
+  -- Never fight the UI during combat: queue the open for when combat drops
+  -- (PLAYER_REGEN_ENABLED below picks it up).
+  if InCombatLockdown and InCombatLockdown() then
+    pendingOpenLFG = true
+    return
+  end
   -- Blizzard_GroupFinder is load-on-demand in Midnight; make sure it's up.
   if C_AddOns and C_AddOns.LoadAddOn then
     pcall(C_AddOns.LoadAddOn, "Blizzard_GroupFinder")
@@ -907,8 +950,8 @@ frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")
 frame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")
 frame:RegisterEvent("LFG_LIST_ACTIVE_ENTRY_UPDATE")
-frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 frame:SetScript("OnEvent", function(_, event, ...)
   if event == "ADDON_LOADED" then
@@ -918,7 +961,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if NS.BuildLogUI then NS.BuildLogUI() end
     if NS.BuildMinimapButton then NS.BuildMinimapButton() end
     if NS.BuildOptions then NS.BuildOptions() end
-    print("|cffffcc00LFGAlert loaded (build " .. tostring(NS.BUILD) .. ").|r /lfgalert for log & options.")
+    print("|cffffcc00" .. l("msg_loaded", "LFGAlert loaded (build %s). /lfgalert for log & options."):format(tostring(NS.BUILD)) .. "|r")
+    return
+  end
+
+  if event == "PLAYER_REGEN_ENABLED" then
+    -- Open the applicant list that was deferred while in combat.
+    if pendingOpenLFG then
+      pendingOpenLFG = false
+      NS.OpenApplicants()
+    end
     return
   end
 
@@ -933,26 +985,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if not HasActiveListing() then return end
         local snap = SnapshotApplicant(applicantID)
         if not snap then return end
-        local prev = known[applicantID]
-        if not prev then
-          known[applicantID] = { status = snap.status, snap = snap }
-          NS.AddLogEntry(applicantID, nil, snap.status or "applied", snap, true)
-          if snap.status == "applied" then
-            NS.AlertNewApplicant(applicantID, snap)
-            NS.MaybeAutoDecline(applicantID, snap)
-          else
-            NS.AnnounceStatusChange(applicantID, nil, snap.status, snap)
-          end
-        elseif prev.status ~= snap.status then
-          local old = prev.status
-          known[applicantID] = { status = snap.status, snap = snap }
-          NS.AddLogEntry(applicantID, old, snap.status, snap, false)
-          NS.AnnounceStatusChange(applicantID, old, snap.status, snap)
-        else
-          prev.snap = snap
-          BackfillLogEntry(applicantID, snap)
-          if not SnapHasData(snap) then
-            -- Details still not ready: retry a few times, then give up.
+        HandleApplicantSnapshot(applicantID, snap, "updated")
+        if not SnapHasData(snap) then
+          -- Details still not ready: retry a few times, then give up.
+          local prev = known[applicantID]
+          if prev then
             local n = (prev.retries or 0) + 1
             prev.retries = n
             if n <= 4 then
@@ -1082,6 +1119,9 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("|cffff2020[LFGAlert]|r Auto-open LFG window " .. (NS.db.autoOpenLFG and "ON" or "OFF"))
   elseif cmd == "open" then
     NS.OpenApplicants()
+  elseif cmd == "resetui" then
+    if NS.ResetUI then NS.ResetUI() end
+    print("|cffff2020[LFGAlert]|r Log window reset (position / size / scale).")
   elseif cmd == "config" or cmd == "options" or cmd == "settings" then
     if Settings and Settings.OpenToCategory and NS._settingsCategory then
       local okC, id = pcall(function() return NS._settingsCategory:GetID() end)
@@ -1173,9 +1213,9 @@ SlashCmdList["LFGALERT"] = function(msg)
     print(string.format("|cffff2020[LFGAlert]|r debug [build %s]: %d stored, filter=%s search=\"%s\"", tostring(NS.BUILD), #log, fst, q))
     for i = math.max(1, #log - 4), #log do
       local e = log[i]
-      if e.separator then
+      if e and e.separator then
         print("  [" .. i .. "] --- " .. tostring(e.separator))
-      else
+      elseif e then
         local nm = (e.members and e.members[1] and e.members[1].name) or "?"
         print(string.format("  [%d] id=%s status=%s members=%d name=%s", i, tostring(e.applicantID), tostring(e.status), #(e.members or {}), tostring(nm)))
       end
@@ -1183,20 +1223,21 @@ SlashCmdList["LFGALERT"] = function(msg)
     if NS.ToggleLogUI then NS.ToggleLogUI(true) end
     if NS.GetLogUIState then
       local st = NS.GetLogUIState()
-      print(string.format("  window: built=%s shown=%s visibleRows=%d", tostring(st.built), tostring(st.shown), st.visibleRows or 0))
+      print(string.format("  window: built=%s shown=%s visibleRows=%d scroll=%d",
+        tostring(st.built), tostring(st.shown), st.visibleRows or 0, st.scrollOffset or 0))
     end
     if NS.ProbeLogUI then
       local p = NS.ProbeLogUI()
-      print(string.format("  probe: pool=%s built=%s r1=%s shown=%s hasEntry=%s emptyCols=%s renderOK=%s page=%s",
+      print(string.format("  probe: pool=%s built=%s r1=%s shown=%s hasEntry=%s emptyCols=%s renderOK=%s",
         tostring(p.pool), tostring(p.built), tostring(p.r1), tostring(p.shown), tostring(p.hasEntry),
-        tostring(p.emptyCols), tostring(p.renderOK), tostring(p.page)))
+        tostring(p.emptyCols), tostring(p.renderOK)))
       print(string.format("  box: cont=%sx%s contVis=%s row1Y=%s r1w=%s",
         tostring(p.contW), tostring(p.contH), tostring(p.contVis),
         tostring(p.row1Y), tostring(p.r1w)))
       print(string.format("  vis: frame=%s r1=%s",
         tostring(p.frameVis), tostring(p.r1vis)))
       if p.firstText then print("  firstText: " .. tostring(p.firstText)) end
-      if p.renderErr then print("  renderErr: " .. p.renderErr) end
+      if p.renderErr then print("  renderErr: " .. tostring(p.renderErr)) end
     end
     if NS._rowBuildError then print("  buildError: " .. tostring(NS._rowBuildError)) end
     if NS._lastRenderError then print("  lastRenderError: " .. tostring(NS._lastRenderError)) end
@@ -1222,6 +1263,7 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("  /lfgalert minkey <n> - only keys >= n (0 = all)")
     print("  /lfgalert window [on|off] - auto-open Group Finder applicants on queue")
     print("  /lfgalert open - open Group Finder applicants now")
+    print("  /lfgalert resetui - reset log window position / size / scale")
     print("  /lfgalert stats - session + all-time summary")
     print("  /lfgalert debug - dump log state (entries/filter/window)")
     print("  /lfgalert mouse - report which frame is under the mouse")

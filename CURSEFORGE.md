@@ -72,12 +72,28 @@ minilvl|minscore|autodecline|stats|window|open|config|debug`
 - Threshold highlights, optional auto-decline, session + all-time stats
 - Custom sounds, minimap button, full settings UI
 
+## Changelog v1.0.15
+
+- **Log window rebuilt**: smooth scrolling through full history (paging gone),
+  sortable columns (click headers), resizable window that remembers position /
+  size / scale, class icons, new-applicant row flash, left-click selects
+  (whisper stays a deliberate action), one-click Reset Filters, Esc closes
+- **Safety fix**: applicant IDs reset on relist, so invite/decline-by-ID now
+  only act on rows from the current listing — stale rows use safe by-name
+  invites and can never decline the wrong person
+- Auto-open Group Finder now waits for combat to end instead of erroring
+- Custom sound files now fall back to the SoundKit ID when the file is invalid
+- Performance: listing info + Raider.IO scores resolved once per scan instead
+  of per applicant; log UI refreshes coalesce bursts
+- Localized UI strings via `Locales/enUS.lua` (translation-ready), MIT
+  `LICENSE`, luacheck + CI
+
 ## Upload checklist
 
 1. Zip layout must be `LFGAlert/LFGAlert.toc` (+ `Core.lua`, `LogFrame.lua`,
-   `Options.lua`) at the top level — exactly this folder.
+   `Options.lua`, `Locales/`) at the top level — exactly this folder.
 2. Game version: Retail 12.x. Release type: Release.
 3. Attach 2–3 screenshots: (a) log window with rows next to the Group Finder
    applicants tab, (b) settings panel, (c) chat alert lines.
-4. Tag the release in git: `git tag v1.0.13` + `git push --tags` (matches
+4. Tag the release in git: `git tag v1.0.15` + `git push --tags` (matches
    `.pkgmeta` for auto-packaging).
