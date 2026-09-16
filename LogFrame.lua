@@ -586,7 +586,7 @@ local function MakeRow(i)
     local label = NS.StatusLabel and select(1, NS.StatusLabel(e.status)) or tostring(e.status)
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(l("tt_status_fmt", "Status: %s"):format(label), 0.8, 0.8, 0.8)
-    GameTooltip:AddLine(string.format("%s → %s → %s  •  ✕ %s / %s",
+    GameTooltip:AddLine(string.format("%s > %s > %s  •  X %s / %s",
       l("tt_icon_queued", "Queued"), l("tt_icon_invited", "Invited"), l("tt_icon_accepted", "Accepted"),
       l("tt_icon_declined", "Declined"), l("tt_icon_left", "Left / expired")), 0.6, 0.6, 0.6)
     GameTooltip:AddLine(l("tt_rc_hint", "Right-click: whisper / invite / decline"), 0.6, 0.6, 0.6)
@@ -645,7 +645,7 @@ local function EntryColumns(entry)
     else
       scoreTxt = "-"
     end
-    if meetsAll then star = "|cffffd100★ |r" end
+    if meetsAll then star = "|cffffd100* |r" end
   else
     ilvlTxt = (m.itemLevel and m.itemLevel > 0) and tostring(math.floor(m.itemLevel)) or "-"
     local scoreNum = (m.rioScore and m.rioScore > 0) and m.rioScore or (m.dungeonScore or 0)
@@ -866,7 +866,7 @@ local function RefreshHeaderWidgets()
     if SORT_VALUE[key] and w then
       local arrow = ""
       if sortKey == key then
-        arrow = (sortDir == "asc") and " ▲" or " ▼"
+        arrow = (sortDir == "asc") and " ^" or " v"
       end
       w:SetText(w.label .. arrow)
     end
@@ -971,7 +971,7 @@ RefreshNow = function()
     if (NS.logFilter.minKey or 0) > 0 then suffix = suffix .. "  •  " .. KeyLabel(NS.logFilter.minKey) end
     if NS.logFilter.query ~= "" then suffix = suffix .. "  •  \"" .. NS.logFilter.query .. "\"" end
     if NS.db and (NS.db.minIlvl > 0 or NS.db.minScore > 0) then
-      suffix = suffix .. string.format("  •  ★ %s / %s",
+      suffix = suffix .. string.format("  •  * %s / %s",
         NS.db.minIlvl > 0 and tostring(NS.db.minIlvl) or "-",
         NS.db.minScore > 0 and tostring(NS.db.minScore) or "-")
     end
@@ -1207,8 +1207,10 @@ function NS.BuildLogUI()
   logFrame:EnableMouse(true) -- stop clicks falling through to the world
   logFrame:SetMovable(true)
   logFrame:SetResizable(true)
-  logFrame:SetMinResize(MIN_W, MIN_H)
-  logFrame:SetMaxResize(MAX_W, MAX_H)
+  -- SetMin/MaxResize are missing on some clients: guard so a nil method can
+  -- never abort the whole window build again (was: plain list, no rows).
+  if logFrame.SetMinResize then logFrame:SetMinResize(MIN_W, MIN_H) end
+  if logFrame.SetMaxResize then logFrame:SetMaxResize(MAX_W, MAX_H) end
   logFrame:SetClampedToScreen(true)
   logFrame:SetFrameStrata("HIGH")
   tinsert(UISpecialFrames, "LFGAlertLogFrame") -- Esc closes the window
@@ -1238,7 +1240,10 @@ function NS.BuildLogUI()
   resizer:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -5, 5)
   resizer:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-Size-BigRight")
   resizer:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-Size-BigRight", "ADD")
-  resizer:SetScript("OnMouseDown", function() logFrame:StartSizing("BOTTOMRIGHT") end)
+  resizer:SetShown(logFrame.StartSizing ~= nil) -- hide dead grip if no resize API
+  resizer:SetScript("OnMouseDown", function()
+    if logFrame.StartSizing then logFrame:StartSizing("BOTTOMRIGHT") end
+  end)
   resizer:SetScript("OnMouseUp", function()
     logFrame:StopMovingOrSizing()
     SaveUISize()

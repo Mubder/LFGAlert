@@ -343,8 +343,8 @@ function NS.BuildOptions()
   y = y - 30
   Note(l("note_custom_example", "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  (drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"), 34)
 
-  Section(l("sec_req", "Requirements (highlight ★ + auto-decline)"))
-  Note(l("note_req", "Rows at/above these get a ★ and green numbers, and auto-decline judges by them. 0 = off. Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."), 34)
+  Section(l("sec_req", "Requirements (highlight * + auto-decline)"))
+  Note(l("note_req", "Rows at/above these get a * and green numbers, and auto-decline judges by them. 0 = off. Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."), 34)
 
   local ilvlSlider = Slider(content, l("slider_ilvl", "Min item level"), 0, 800, 1,
     function() return NS.db.minIlvl or 0 end,
