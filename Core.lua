@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 15 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 16 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -561,24 +561,61 @@ function NS.AddLogEntry(applicantID, oldStatus, newStatus, snap, isNewApplicant)
   if not NS.db then return end
   local m = PrimaryMember(snap)
   local li = (snap and snap.listing) or NS.CurrentListingInfo()
-  local entry = {
-    t = time(),
-    applicantID = applicantID,
-    oldStatus = oldStatus,
-    status = newStatus,
-    isNew = isNewApplicant and true or false,
-    comment = (snap and snap.comment) or "",
-    numMembers = (snap and snap.numMembers) or (m and 1) or 1,
-    members = {},
-    detailShown = SnapHasData(snap),
-    dungeon = li and li.dungeon or nil,
-    dungeonFull = li and li.dungeonFull or nil,
-    key = li and li.key or nil,
-    keySource = li and li.source or nil,
-    listingTitle = li and li.title or nil,
-    session = listingSession,
-  }
-  CopySnapMembers(entry.members, snap)
+
+  -- One row per applicant per listing session: a status transition UPDATES
+  -- the existing row (shown as lifecycle icons in the log) instead of
+  -- stacking separate "Queued" / "Invited" / "Accepted" rows.
+  local entry
+  for i = #NS.db.log, 1, -1 do
+    local e = NS.db.log[i]
+    if e and not e.separator and e.applicantID == applicantID
+      and (e.session == nil or e.session == listingSession) then
+      entry = e
+      break
+    end
+  end
+
+  local now = time()
+  if entry then
+    entry.oldStatus = oldStatus
+    entry.status = newStatus
+    -- A (re-)application surfaces the row as fresh again.
+    if newStatus == "applied" then entry.t = now end
+    if SnapHasData(snap) then
+      wipe(entry.members)
+      CopySnapMembers(entry.members, snap)
+    end
+    entry.numMembers = (snap and snap.numMembers) or entry.numMembers or 1
+    if snap and snap.comment and snap.comment ~= "" then entry.comment = snap.comment end
+    if entry.dungeon == nil and li then
+      entry.dungeon, entry.dungeonFull, entry.key, entry.keySource, entry.listingTitle =
+        li.dungeon, li.dungeonFull, li.key, li.source, li.title
+    end
+    entry.history = entry.history or {}
+    entry.history[#entry.history + 1] = { status = newStatus, t = now }
+    if #entry.history > 8 then table.remove(entry.history, 1) end
+  else
+    entry = {
+      t = now,
+      applicantID = applicantID,
+      oldStatus = oldStatus,
+      status = newStatus,
+      isNew = isNewApplicant and true or false,
+      comment = (snap and snap.comment) or "",
+      numMembers = (snap and snap.numMembers) or (m and 1) or 1,
+      members = {},
+      detailShown = SnapHasData(snap),
+      dungeon = li and li.dungeon or nil,
+      dungeonFull = li and li.dungeonFull or nil,
+      key = li and li.key or nil,
+      keySource = li and li.source or nil,
+      listingTitle = li and li.title or nil,
+      session = listingSession,
+      history = { { status = newStatus, t = now } },
+    }
+    CopySnapMembers(entry.members, snap)
+    NS.db.log[#NS.db.log + 1] = entry
+  end
   if BucketFor(newStatus) == "declined" and NS._autoReason then
     local ar = NS._autoReason[applicantID]
     if ar and (ar.session == nil or ar.session == listingSession) then
@@ -587,7 +624,6 @@ function NS.AddLogEntry(applicantID, oldStatus, newStatus, snap, isNewApplicant)
     end
     NS._autoReason[applicantID] = nil
   end
-  NS.db.log[#NS.db.log + 1] = entry
   TrimLog()
   NS.RecordStat(applicantID, newStatus, entry.session)
   if NS.RefreshLogUI then
@@ -711,16 +747,16 @@ local function BackfillLogEntry(applicantID, snap)
           e.dungeon, e.dungeonFull, e.key, e.keySource, e.listingTitle =
             snap.listing.dungeon, snap.listing.dungeonFull, snap.listing.key, snap.listing.source, snap.listing.title
         end
-        if e.status == "applied" and not e.detailShown then
+        if not e.detailShown then
           e.detailShown = true
           ChatMessage(l("alert_chat_fmt", "New applicant: %s"):format(MemberSummary({ members = e.members, numMembers = e.numMembers, comment = e.comment, listing = snap.listing })))
           if e.comment and e.comment ~= "" then
             ChatMessage(l("note_fmt", 'Note: "%s"'):format(e.comment))
           end
         end
-        if e.status == "applied" then
-          NS.MaybeAutoDecline(applicantID, snap)
-        end
+        -- MaybeAutoDecline re-verifies the applicant is still pending, so it
+        -- is safe to attempt on every backfill.
+        NS.MaybeAutoDecline(applicantID, snap)
         changed = true
       end
     end

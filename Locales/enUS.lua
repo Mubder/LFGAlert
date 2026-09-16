@@ -91,6 +91,13 @@ L.tt_group_fmt   = "Group application (%d):"
 L.tt_status_fmt  = "Status: %s"
 L.tt_rc_hint     = "Right-click: whisper / invite / decline"
 L.tt_yourkey     = " (your key)"
+L.tt_history       = "History"
+L.tt_auto_declined = "Auto-declined (%s)"
+L.tt_icon_queued   = "Queued"
+L.tt_icon_invited  = "Invited"
+L.tt_icon_accepted = "Accepted"
+L.tt_icon_declined = "Declined"
+L.tt_icon_left     = "Left / expired"
 
 -- Log row text
 L.declined_label = "Declined"

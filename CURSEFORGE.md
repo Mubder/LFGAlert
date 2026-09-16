@@ -20,12 +20,15 @@ Group listing you get a sound, a center-screen raid warning, and a full
 applicant log: class, spec, role, item level, and Mythic+ score at a glance.
 
 📝 Applicant log
-Every signup is recorded — queued, invited, accepted, declined, cancelled or
-timed out — in a Blizzard-styled table: Time | Applicant | Class/Spec | Role |
-Key | iLvl | M+ Score | Status | Notes. Class icons, class-colored names, rows
-tinted by status (green accepted, red declined, gold queued) and fresh
-applicants flash so you spot them instantly. Hover any row for full details:
-group members, notes, both Blizzard and Raider.IO scores.
+Every applicant gets ONE row. The Status column is a lifecycle icon strip:
+🔔 queued → ⏳ invited → ✅ accepted, plus ✕ for declined/left — stages that
+happened are colored, the rest greyed out, and hovering the row shows the full
+transition timeline with timestamps. Table columns: Time | Applicant |
+Class/Spec | Role | Key | iLvl | M+ Score | Status | Notes. Class icons,
+class-colored names, zebra striping, rows tinted by status (green accepted,
+red declined, gold queued) and fresh applicants flash so you spot them
+instantly. Hover any row for full details: group members, notes, both Blizzard
+and Raider.IO scores.
 
 🖱️ Smooth scrolling + sortable columns
 The whole history is one scrollable list — mouse wheel or scrollbar, no paging.
@@ -94,6 +97,16 @@ Notes & FAQ
   status tints, decline reasons, hover tooltips
 - Threshold highlights, optional auto-decline, session + all-time stats
 - Custom sounds, minimap button, full settings UI
+
+## Changelog v1.0.16
+
+- **One row per applicant**: status transitions update the row instead of
+  stacking "Queued / Invited / Accepted" duplicates
+- **Lifecycle icon strip** in the Status column: queued → invited → accepted,
+  ✕ declined/left. Reached stages colored, unreached greyed; hover for the
+  full timeline with timestamps
+- UI polish: gold-framed list area, dark header band, zebra striping, gold
+  selection accent, gold title accents
 
 ## Changelog v1.0.15
 

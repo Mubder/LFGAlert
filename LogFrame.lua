@@ -61,6 +61,17 @@ local COLS = {
   { key = "note",   label = l("col_note", "Notes"),      width = 0,   justify = "LEFT" },
 }
 
+-- Lifecycle icons for the Status column: queued → invited → accepted, plus
+-- ✕ for declined/left. Reached stages render in color, unreached greyed.
+local STATUS_ICON_FILES = {
+  "Interface\\Icons\\INV_Misc_Bell_01",          -- queued
+  "Interface\\RaidFrame\\ReadyCheck-Waiting",    -- invited (waiting on answer)
+  "Interface\\RaidFrame\\ReadyCheck-Ready",      -- accepted
+  "Interface\\RaidFrame\\ReadyCheck-NotReady",   -- declined / left
+}
+local STATUS_ICON_SIZE = 14
+local STATUS_ICON_GAP = 5
+
 -- Byte-safe truncation that never splits a UTF-8 sequence.
 local function Trunc(s, n)
   if not s or s == "" then return "" end
@@ -381,12 +392,20 @@ local function MakeRow(i)
   stripe:SetColorTexture(0.5, 0.38, 0.12, 0.2)
   b.stripe = stripe
 
-  -- Selection highlight (left-click selects; actions stay on buttons/menu).
+  -- Selection highlight (left-click selects; actions stay on buttons/menu):
+  -- soft wash + a bright gold accent bar on the row's left edge.
   local selTex = b:CreateTexture(nil, "ARTWORK")
   selTex:SetAllPoints()
   selTex:SetColorTexture(1, 0.82, 0, 0.15)
   selTex:Hide()
   b.selTex = selTex
+
+  local accent = b:CreateTexture(nil, "OVERLAY")
+  accent:SetSize(3, ROW_HEIGHT - 6)
+  accent:SetPoint("LEFT", b, "LEFT", 0, 0)
+  accent:SetColorTexture(1, 0.82, 0, 0.95)
+  accent:Hide()
+  b.accent = accent
 
   -- New-row flash: brief alpha pulse on freshly queued applicants.
   local flash = b:CreateTexture(nil, "ARTWORK")
@@ -410,6 +429,7 @@ local function MakeRow(i)
   -- The note column stops before the action-button zone at the right edge.
   b.cols = {}
   local x = 2
+  local statusX = nil
   for _, c in ipairs(COLS) do
     local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     fs:SetJustifyH(c.justify)
@@ -423,11 +443,27 @@ local function MakeRow(i)
       fs:SetWidth(c.width)
       x = x + c.width + NAME_ICON_W + ROW_GAP
     else
+      if c.key == "status" then statusX = x end
       fs:SetPoint("LEFT", b, "LEFT", x, 0)
       fs:SetWidth(c.width)
       x = x + c.width + ROW_GAP
     end
     b.cols[c.key] = fs
+  end
+
+  -- Lifecycle status icons inside the Status column slot.
+  if statusX then
+    b.statusIcons = {}
+    for i, texPath in ipairs(STATUS_ICON_FILES) do
+      local ic = b:CreateTexture(nil, "OVERLAY")
+      ic:SetSize(STATUS_ICON_SIZE, STATUS_ICON_SIZE)
+      ic:SetPoint("TOPLEFT", b, "TOPLEFT", statusX + (i - 1) * (STATUS_ICON_SIZE + STATUS_ICON_GAP), -4)
+      ic:SetTexture(texPath)
+      ic:SetDesaturated(true)
+      ic:SetAlpha(0.3)
+      ic:Hide()
+      b.statusIcons[i] = ic
+    end
   end
 
   -- One-click action buttons (whisper / invite / decline), right edge.
@@ -531,9 +567,25 @@ local function MakeRow(i)
       GameTooltip:AddLine(" ")
       GameTooltip:AddLine("\"" .. e.comment .. "\"", 0.7, 0.9, 1, true)
     end
+    if e.autoDeclined then
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine(l("tt_auto_declined", "Auto-declined (%s)"):format(e.declineReason or l("auto_label", "Auto")), 1, 0.4, 0.35)
+    end
+    if e.history and #e.history > 1 then
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine(l("tt_history", "History"), 0.9, 0.9, 0.9)
+      for hi = math.max(1, #e.history - 5), #e.history do
+        local hh = e.history[hi]
+        local hlabel = NS.StatusLabel and select(1, NS.StatusLabel(hh.status)) or tostring(hh.status)
+        GameTooltip:AddDoubleLine(TimeStr(hh.t), hlabel, 0.7, 0.7, 0.7, 0.85, 0.85, 0.85)
+      end
+    end
     local label = NS.StatusLabel and select(1, NS.StatusLabel(e.status)) or tostring(e.status)
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(l("tt_status_fmt", "Status: %s"):format(label), 0.8, 0.8, 0.8)
+    GameTooltip:AddLine(string.format("%s → %s → %s  •  ✕ %s / %s",
+      l("tt_icon_queued", "Queued"), l("tt_icon_invited", "Invited"), l("tt_icon_accepted", "Accepted"),
+      l("tt_icon_declined", "Declined"), l("tt_icon_left", "Left / expired")), 0.6, 0.6, 0.6)
     GameTooltip:AddLine(l("tt_rc_hint", "Right-click: whisper / invite / decline"), 0.6, 0.6, 0.6)
     GameTooltip:Show()
   end)
@@ -554,10 +606,9 @@ end
 local function EntryColumns(entry)
   if entry.separator then return nil end
   local m = entry.members and entry.members[1]
-  local label, color = NS.StatusLabel(entry.status)
   local cols = {}
   cols.time = TimeStr(entry.t)
-  cols.status = "|cff" .. color .. label .. "|r"
+  cols.status = "" -- lifecycle is drawn as status icons in RenderRow
   -- Run context is known even when member data isn't (e.g. fresh "?" rows).
   if entry.key and entry.dungeon then
     cols.run = "|cffffd100+" .. tostring(entry.key) .. " " .. Trunc(entry.dungeon, 5) .. "|r"
@@ -603,12 +654,6 @@ local function EntryColumns(entry)
   end
   cols.name = nameTxt
   cols.role = NS.RoleTag(NS.ResolveRole(m))
-  if entry.autoDeclined then
-    cols.status = "|cffff5555" .. l("declined_label", "Declined")
-      .. (entry.declineReason and (" (" .. entry.declineReason .. ")") or (" (" .. l("auto_label", "Auto") .. ")")) .. "|r"
-  elseif entry.status == "applied" and thrOn and meetsAll then
-    cols.status = "|cffffd100" .. l("queued_star", "Queued ★") .. "|r"
-  end
   cols.spec = Trunc(m.specName or m.localizedClass or m.class or "-", 14)
   cols.ilvl = ilvlTxt
   cols.score = scoreTxt
@@ -620,7 +665,49 @@ end
 -- Render loop (FauxScrollFrame pattern: fixed row pool, offset into `view`)
 -- ---------------------------------------------------------------------------
 
-local function RenderRow(row, entry)
+-- Color the lifecycle icons for an entry: reached stages full color, the
+-- rest desaturated at low alpha. The ✕ has three looks: red lit (declined
+-- by you/auto), grey lit (they left/expired), dark grey (nothing negative).
+local function StyleStatusIcons(row, entry)
+  if not row.statusIcons then return end
+  if not entry or entry.separator then
+    for _, ic in ipairs(row.statusIcons) do ic:Hide() end
+    return
+  end
+  local st = entry.status
+  local invitedDone = (st == "invited" or st == "inviteaccepted" or st == "invitedeclined")
+  local acceptedDone = (st == "inviteaccepted")
+  local endedKind = "none"
+  if DECLINED_SET[st] then
+    endedKind = "declined"
+  elseif st == "cancelled" or st == "timedout" then
+    endedKind = "gone"
+  end
+  for idx, ic in ipairs(row.statusIcons) do
+    ic:Show()
+    ic:SetVertexColor(1, 1, 1)
+    ic:SetDesaturated(false)
+    ic:SetAlpha(1)
+    if idx == 1 then
+      -- queued: always reached for a real entry
+    elseif idx == 2 and not invitedDone or idx == 3 and not acceptedDone then
+      ic:SetDesaturated(true)
+      ic:SetAlpha(0.30)
+    elseif idx == 4 then
+      if endedKind == "none" then
+        ic:SetDesaturated(true)
+        ic:SetAlpha(0.30)
+      elseif endedKind == "gone" then
+        ic:SetDesaturated(true)
+        ic:SetVertexColor(0.72, 0.72, 0.85)
+        ic:SetAlpha(0.85)
+      end
+      -- endedKind == "declined": keep full color (red X)
+    end
+  end
+end
+
+local function RenderRow(row, entry, i)
   if not entry then
     row:Hide()
     row.entry = nil
@@ -628,18 +715,27 @@ local function RenderRow(row, entry)
   end
   row:Show()
   row.entry = entry
+  -- Status tint + soft zebra striping so long histories stay readable.
   local tr, tg, tb, ta = 0.2, 0.2, 0.2, 0.12
   if not entry.separator then
     tr, tg, tb = StatusTint(entry.status)
-    ta = 0.22
+    ta = (i and i % 2 == 0) and 0.13 or 0.24
   end
   row.stripe:SetColorTexture(tr, tg, tb, ta)
   local m0 = (not entry.separator) and entry.members and entry.members[1] or nil
   SetClassIcon(row.icon, m0 and m0.class or nil)
+  StyleStatusIcons(row, entry)
   row.act[1]:SetShown(not entry.separator)
   row.act[2]:SetShown(not entry.separator)
   row.act[3]:SetShown(RowLFGActionsAllowed(entry))
-  if entry == selectedEntry then row.selTex:Show() else row.selTex:Hide() end
+  local sel = (entry == selectedEntry)
+  if sel then
+    row.selTex:Show()
+    if row.accent then row.accent:Show() end
+  else
+    row.selTex:Hide()
+    if row.accent then row.accent:Hide() end
+  end
   if not entry.separator and entry.status == "applied" and (time() - (entry.t or 0)) <= FLASH_WINDOW then
     row.flash:Show()
     if not row.flashAnim:IsPlaying() then row.flashAnim:Play() end
@@ -687,7 +783,7 @@ RenderRows = function()
         return
       end
     end
-    RenderRow(row, view[offset + i])
+    RenderRow(row, view[offset + i], i)
   end
   for i = visible + 1, #rows do
     rows[i]:Hide()
@@ -707,6 +803,10 @@ RenderRows = function()
       end
       r.icon:SetTexture(nil)
       r.selTex:Hide()
+      if r.accent then r.accent:Hide() end
+      if r.statusIcons then
+        for _, ic in ipairs(r.statusIcons) do ic:Hide() end
+      end
       r.flash:Hide()
       r.act[1]:Hide()
       r.act[2]:Hide()
@@ -1033,7 +1133,13 @@ function NS.BuildLogUI()
   end
   if logFrame.TitleText then
     logFrame.TitleText:SetText(l("log_title", "LFGAlert Applicant Log"))
+    logFrame.TitleText:SetTextColor(1, 0.82, 0)
   end
+  -- Small bell beside the title bar (brand mark, decorative).
+  local bell = logFrame:CreateTexture(nil, "ARTWORK")
+  bell:SetSize(20, 20)
+  bell:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -8)
+  bell:SetTexture("Interface\\Icons\\INV_Misc_Bell_01")
 
   local ui = NS.db.ui or {}
   local w = tonumber(ui.w) or DEFAULT_W
@@ -1182,11 +1288,16 @@ function NS.BuildLogUI()
     end
   end
 
-  local sep = logFrame:CreateTexture(nil, "ARTWORK")
-  sep:SetColorTexture(1, 1, 1, 0.15)
-  sep:SetHeight(1)
-  sep:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -78)
-  sep:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -36, -78)
+  -- Header band: dark strip behind the column headers with a gold edge.
+  local band = logFrame:CreateTexture(nil, "BACKGROUND")
+  band:SetColorTexture(0, 0, 0, 0.38)
+  band:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 10, -54)
+  band:SetPoint("BOTTOMRIGHT", logFrame, "TOPRIGHT", -10, -80)
+  local bandEdge = logFrame:CreateTexture(nil, "BACKGROUND")
+  bandEdge:SetColorTexture(0.85, 0.68, 0.30, 0.85)
+  bandEdge:SetHeight(1)
+  bandEdge:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 10, -80)
+  bandEdge:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -10, -80)
 
   -- List area with faux scroll frame: fixed visible row pool re-rendered
   -- from the scroll offset (the standard light-weight scroll list pattern).
@@ -1195,6 +1306,37 @@ function NS.BuildLogUI()
   listArea:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -12, 34)
   listArea:EnableMouse(true)
   listArea:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta) end)
+
+  -- Gold hairline frame around the list (drawn at BACKGROUND layer so all
+  -- rows render above it).
+  local function GoldHairline()
+    local t = listArea:CreateTexture(nil, "BACKGROUND")
+    t:SetColorTexture(0.85, 0.68, 0.30, 0.85)
+    return t
+  end
+  local hTop = GoldHairline()
+  hTop:SetHeight(1)
+  hTop:SetPoint("TOPLEFT", listArea, "TOPLEFT", -3, 3)
+  hTop:SetPoint("TOPRIGHT", listArea, "TOPRIGHT", 3, 3)
+  local hBot = GoldHairline()
+  hBot:SetHeight(1)
+  hBot:SetPoint("BOTTOMLEFT", listArea, "BOTTOMLEFT", -3, -3)
+  hBot:SetPoint("BOTTOMRIGHT", listArea, "BOTTOMRIGHT", 3, -3)
+  local hLeft = GoldHairline()
+  hLeft:SetWidth(1)
+  hLeft:SetPoint("TOPLEFT", listArea, "TOPLEFT", -3, 3)
+  hLeft:SetPoint("BOTTOMLEFT", listArea, "BOTTOMLEFT", -3, -3)
+  local hRight = GoldHairline()
+  hRight:SetWidth(1)
+  hRight:SetPoint("TOPRIGHT", listArea, "TOPRIGHT", 3, 3)
+  hRight:SetPoint("BOTTOMRIGHT", listArea, "BOTTOMRIGHT", 3, -3)
+
+  -- Matching gold hairline above the footer.
+  local footLine = logFrame:CreateTexture(nil, "BACKGROUND")
+  footLine:SetColorTexture(0.85, 0.68, 0.30, 0.55)
+  footLine:SetHeight(1)
+  footLine:SetPoint("BOTTOMLEFT", logFrame, "BOTTOMLEFT", 16, 33)
+  footLine:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -16, 33)
 
   scrollFrame = CreateFrame("ScrollFrame", "LFGAlertLogScroll", listArea, "FauxScrollFrameTemplate")
   scrollFrame:SetPoint("TOPLEFT", listArea, "TOPLEFT", 0, 0)

@@ -6,9 +6,9 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
 
 - 🔊 Sound + center raid-warning + red chat message when someone signs up (leader only)
 - 🪟 **Auto-opens Blizzard's Group Finder on your applicant list** on new queue (toggle: `/lfgalert window off`, manual: `/lfgalert open`; deferred until combat ends if you're fighting)
-- 📝 Log of **who queued / was invited / accepted / declined / cancelled / timed out**
+- 📝 Log of **who queued / was invited / accepted / declined / cancelled / timed out** — one row per applicant: the Status column shows a lifecycle icon strip (🔔 queued → ⏳ invited → ✅ accepted, ✕ declined/left). Stages that happened are colored, the rest greyed out; hover for the full transition timeline.
 - 🪟 **Scrollable, sortable log window** — smooth mouse-wheel scrolling through the whole history (no paging), click any column header (Time / Applicant / Key / iLvl / M+ Score / Status) to sort, resizable from the bottom-right corner, remembers position / size / scale between sessions (`/lfgalert resetui` to reset)
-- 🧙 Group-Finder-styled table: **Time | Applicant | Class/Spec | Role | Key | iLvl | M+ Score | Status | Notes** — gold headers, class icons + class-colored names, rows tinted by status (green invited/accepted, red declined, gold queued), fresh queues flash briefly, full detail in tooltip
+- 🧙 Group-Finder-styled table: **Time | Applicant | Class/Spec | Role | Key | iLvl | M+ Score | Status | Notes** — gold headers on a dark band, gold-framed list area, class icons + class-colored names, zebra striping + rows tinted by status (green accepted, red declined, gold queued), fresh queues flash briefly, full detail in tooltip
 - 🗝️ **Dungeon + key level per row** (e.g. `+5 AOF`) — captured from your live listing, stored per entry so it survives delists; also appended to chat lines (`[+5 AOF]`)
   - Midnight hides listing text from addons (`|Ku5|k` secrets): the addon sanitizes those, then falls back to **your own keystone** when pushing your key (toggle in Settings; tooltip marks it “your key”)
 - 📣 Queue message shows the player's **role** (center banner + chat line)
