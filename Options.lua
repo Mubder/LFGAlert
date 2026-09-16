@@ -1,0 +1,357 @@
+-- LFGAlert - Options.lua
+-- Minimap button + Blizzard Settings panel.
+local ADDON_NAME, TITLE = ...
+LFGAlert = LFGAlert or {}
+local NS = LFGAlert
+
+-- ---------------------------------------------------------------------------
+-- Minimap button (no library, Blizzard-style)
+-- ---------------------------------------------------------------------------
+
+local mmButton
+
+local function MinimapPos(angleDeg)
+  local rad = math.rad(angleDeg or 220)
+  local x, y = math.cos(rad), math.sin(rad)
+  -- Minimap is ~140px radius; keep button on the edge.
+  return x * 80, y * 80
+end
+
+function NS.BuildMinimapButton()
+  if mmButton then
+    mmButton:SetShown(NS.db and NS.db.showMinimapButton ~= false)
+    return
+  end
+  mmButton = CreateFrame("Button", "LFGAlertMinimapButton", Minimap)
+  mmButton:SetSize(31, 31)
+  mmButton:SetFrameStrata("MEDIUM")
+  mmButton:SetFrameLevel(8)
+  mmButton:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+  local overlay = mmButton:CreateTexture(nil, "OVERLAY")
+  overlay:SetSize(53, 53)
+  overlay:SetPoint("TOPLEFT", 0, 0)
+  overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+
+  local bg = mmButton:CreateTexture(nil, "BACKGROUND")
+  bg:SetSize(20, 20)
+  bg:SetPoint("CENTER", 0, 1)
+  bg:SetTexture("Interface\\Icons\\INV_Misc_Bell_01")
+
+  local function UpdatePos()
+    local mx, my = MinimapPos(NS.db and NS.db.minimapAngle or 220)
+    mmButton:ClearAllPoints()
+    mmButton:SetPoint("CENTER", Minimap, "CENTER", mx, my)
+  end
+  UpdatePos()
+  mmButton.UpdatePos = UpdatePos
+
+  mmButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  mmButton:RegisterForDrag("LeftButton")
+  mmButton:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", function(s)
+    local mx, my = Minimap:GetCenter()
+    local cx, cy = GetCursorPosition()
+    local scale = Minimap:GetEffectiveScale()
+    cx, cy = cx / scale, cy / scale
+    local angle = math.deg(math.atan2(cy - my, cx - mx))
+    NS.db.minimapAngle = angle
+    UpdatePos()
+  end) end)
+  mmButton:SetScript("OnDragStop", function(self)
+    self:SetScript("OnUpdate", nil)
+  end)
+  mmButton:SetScript("OnClick", function(_, button)
+    if button == "LeftButton" then
+      NS.ToggleLogUI()
+    else
+      NS.db.soundEnabled = not NS.db.soundEnabled
+      print("|cffff2020[LFGAlert]|r Sound " .. (NS.db.soundEnabled and "|cff33cc33ON|r" or "|cffff4444OFF|r"))
+    end
+  end)
+  mmButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:SetText("LFGAlert")
+    GameTooltip:AddLine("Left-click: open applicant log", 1, 1, 1)
+    GameTooltip:AddLine("Right-click: sound on/off (now: " .. (NS.db.soundEnabled and "ON" or "OFF") .. ")", 1, 1, 1)
+    GameTooltip:AddLine("Drag: move minimap icon", 0.7, 0.7, 0.7)
+    GameTooltip:Show()
+  end)
+  mmButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  mmButton:SetShown(NS.db and NS.db.showMinimapButton ~= false)
+end
+
+-- ---------------------------------------------------------------------------
+-- Settings panel (works on Retail 11+/12+ and falls back to old API)
+-- ---------------------------------------------------------------------------
+
+local function Checkbox(parent, label, get, set)
+  local cb = CreateFrame("CheckButton", nil, parent, "InterfaceOptionsCheckButtonTemplate")
+  cb.Text:SetText(label)
+  cb:SetScript("OnShow", function(self) self:SetChecked(get()) end)
+  cb:SetScript("OnClick", function(self) set(self:GetChecked()) end)
+  return cb
+end
+
+local function Slider(parent, label, minV, maxV, step, get, set)
+  local s = CreateFrame("Slider", nil, parent, "OptionsSliderTemplate")
+  s:SetSize(280, 20)
+  s:SetMinMaxValues(minV, maxV)
+  s:SetValueStep(step)
+  s:SetObeyStepOnDrag(true)
+  s.Low:SetText(tostring(minV))
+  s.High:SetText(tostring(maxV))
+  local function paint(v)
+    v = math.floor((v or 0) + 0.5)
+    s.Text:SetText(label .. ": " .. tostring(v) .. (v <= 0 and " (off)" or ""))
+  end
+  s:SetScript("OnShow", function(self)
+    local v = get() or 0
+    self:SetValue(v)
+    paint(v)
+  end)
+  s:SetScript("OnValueChanged", function(self, v)
+    v = math.floor(v + 0.5)
+    paint(v)
+    set(v)
+    if NS.RefreshLogUI then NS.RefreshLogUI() end
+  end)
+  return s
+end
+
+function NS.BuildOptions()
+  local panel = CreateFrame("Frame", "LFGAlertOptionsPanel")
+  panel.name = "LFGAlert"
+
+  -- Scrollable content so every option fits on any client size.
+  local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 0, -8)
+  scroll:SetPoint("BOTTOMRIGHT", 0, 8)
+  local content = CreateFrame("Frame", nil, scroll)
+  content:SetSize(620, 920)
+  scroll:SetScrollChild(content)
+
+  local y = -8
+  local function Section(text)
+    y = y - 20
+    local h = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    h:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y)
+    h:SetText(text)
+    h:SetTextColor(1, 0.82, 0)
+    y = y - 28
+  end
+  local function AddCB(label, get, set)
+    local cb = Checkbox(content, label, get, set)
+    cb:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+    y = y - 30
+    return cb
+  end
+  local function Note(text, h)
+    local d = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    d:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+    d:SetWidth(560)
+    d:SetJustifyH("LEFT")
+    d:SetText(text)
+    d:SetTextColor(0.7, 0.7, 0.7)
+    y = y - (h or 22)
+  end
+  local function ButtonsRow(defs)
+    local bx = 24
+    for _, def in ipairs(defs) do
+      local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+      b:SetSize(def[2], 24)
+      b:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
+      b:SetText(def[1])
+      b:SetScript("OnClick", def[3])
+      bx = bx + def[2] + 10
+    end
+    y = y - 32
+  end
+
+  local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y)
+  title:SetText("LFGAlert - Group Finder applicant alerts")
+  y = y - 24
+  local addonVer = "?"
+  if C_AddOns and C_AddOns.GetAddOnMetadata then
+    local ok, vv = pcall(C_AddOns.GetAddOnMetadata, ADDON_NAME, "Version")
+    if ok and vv then addonVer = vv end
+  elseif GetAddOnMetadata then
+    local ok, vv = pcall(GetAddOnMetadata, ADDON_NAME, "Version")
+    if ok and vv then addonVer = vv end
+  end
+  local verText = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  verText:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y)
+  verText:SetTextColor(0.6, 0.6, 0.6)
+  verText:SetText("Version " .. tostring(addonVer) .. "  •  build " .. tostring(NS.BUILD or "?") .. "  •  /lfgalert for commands")
+  y = y - 20
+
+  Section("General")
+  AddCB("Enable LFGAlert", function() return NS.db.enabled end,
+    function(v) NS.db.enabled = v end)
+  AddCB("Show minimap button (left: log, right: sound, drag: move)", function() return NS.db.showMinimapButton ~= false end,
+    function(v) NS.db.showMinimapButton = v; if mmButton then mmButton:SetShown(v) end end)
+  AddCB("Open Group Finder applicants on new queue", function() return NS.db.autoOpenLFG ~= false end,
+    function(v) NS.db.autoOpenLFG = v end)
+  AddCB("Use my own keystone for dungeon/key when listing text is hidden", function() return NS.db.assumeOwnKey ~= false end,
+    function(v) NS.db.assumeOwnKey = v end)
+
+  Section("Alerts & Sound")
+  AddCB("Play sound on new application", function() return NS.db.soundEnabled end,
+    function(v) NS.db.soundEnabled = v end)
+  AddCB("Show raid-warning in screen center", function() return NS.db.raidWarning end,
+    function(v) NS.db.raidWarning = v end)
+  AddCB("Show chat message", function() return NS.db.chatMessage end,
+    function(v) NS.db.chatMessage = v end)
+  AddCB("Flash taskbar on new application", function() return NS.db.flashTaskbar end,
+    function(v) NS.db.flashTaskbar = v end)
+
+  Note("Presets (click to preview):")
+  local eb -- forward declaration: presets update the ID box below
+  do
+    local bx, bw = 24, 110
+    for _, p in ipairs({ { "Raid Warning", 8959 }, { "Ready Check", 8960 }, { "Level Up", 12867 } }) do
+      local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+      b:SetSize(bw, 22)
+      b:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
+      b:SetText(p[1])
+      b:SetScript("OnClick", function()
+        NS.db.soundID = p[2]
+        NS.db.useCustomSound = false
+        NS.db.soundEnabled = true
+        if eb then eb:SetText(tostring(p[2])) end
+        NS.PlayAlertSound()
+      end)
+      bx = bx + bw + 8
+    end
+    y = y - 30
+  end
+
+  local soundLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  soundLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y - 4)
+  soundLabel:SetText("Sound ID:")
+
+  eb = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+  eb:SetSize(100, 24)
+  eb:SetPoint("LEFT", soundLabel, "RIGHT", 10, 0)
+  eb:SetAutoFocus(false)
+  eb:SetNumeric(true)
+  eb:SetScript("OnShow", function(self) self:SetText(tostring(NS.db.soundID or 8959)) end)
+  eb:SetScript("OnEnterPressed", function(self)
+    local id = tonumber(self:GetText())
+    if id then
+      NS.db.soundID = id
+      NS.db.useCustomSound = false
+      NS.db.soundEnabled = true
+      NS.PlayAlertSound()
+      print("|cffff2020[LFGAlert]|r Sound set to " .. id)
+    end
+    self:ClearFocus()
+  end)
+
+  local testBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+  testBtn:SetSize(110, 24)
+  testBtn:SetPoint("LEFT", eb, "RIGHT", 10, 0)
+  testBtn:SetText("Test sound")
+  testBtn:SetScript("OnClick", function() NS.PlayAlertSound() end)
+  y = y - 34
+
+  local customCB = Checkbox(content, "Use custom sound file instead of Sound ID", function() return NS.db.useCustomSound end,
+    function(v) NS.db.useCustomSound = v end)
+  customCB:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+  y = y - 30
+
+  local pathLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  pathLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 48, y - 4)
+  pathLabel:SetText("File path:")
+
+  local pathBox = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+  pathBox:SetSize(280, 24)
+  pathBox:SetPoint("LEFT", pathLabel, "RIGHT", 10, 0)
+  pathBox:SetAutoFocus(false)
+  pathBox:SetScript("OnShow", function(self) self:SetText(NS.db.customSoundPath or "") end)
+  pathBox:SetScript("OnEnterPressed", function(self)
+    local p = self:GetText() or ""
+    if strtrim then p = strtrim(p) else p = p:match("^%s*(.-)%s*$") end
+    if p == "" then
+      NS.db.useCustomSound = false
+      print("|cffff2020[LFGAlert]|r Custom sound OFF.")
+    else
+      NS.db.customSoundPath = p
+      NS.db.useCustomSound = true
+      NS.db.soundEnabled = true
+      NS.PlayAlertSound()
+      print("|cffff2020[LFGAlert]|r Custom sound set. Playing...")
+    end
+    self:ClearFocus()
+  end)
+  y = y - 30
+  Note("Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  (drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)", 34)
+
+  Section("Requirements (highlight ★ + auto-decline)")
+  Note("Rows at/above these get a ★ and green numbers, and auto-decline judges by them. 0 = off. Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>.", 34)
+
+  local ilvlSlider = Slider(content, "Min item level", 0, 800, 1,
+    function() return NS.db.minIlvl or 0 end,
+    function(v) NS.db.minIlvl = v end)
+  ilvlSlider:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+  y = y - 54
+
+  local scoreSlider = Slider(content, "Min M+ score", 0, 5000, 5,
+    function() return NS.db.minScore or 0 end,
+    function(v) NS.db.minScore = v end)
+  scoreSlider:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+  y = y - 54
+
+  AddCB("Auto-decline below thresholds (only with real data)", function() return NS.db.autoDecline end,
+    function(v) NS.db.autoDecline = v end)
+
+  Section("Data & Stats")
+  local statsText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  statsText:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+  statsText:SetWidth(560)
+  statsText:SetJustifyH("LEFT")
+  local function refreshStatsText()
+    local st = NS.db and NS.db.stats and NS.db.stats.total
+    if st then
+      statsText:SetText(string.format("All time: %d queued • %d accepted • %d declined%s",
+        st.queued or 0, st.accepted or 0, (st.declined or 0) + (st.auto or 0),
+        (st.auto or 0) > 0 and (" (" .. st.auto .. " auto)") or ""))
+    else
+      statsText:SetText("No stats yet.")
+    end
+  end
+  refreshStatsText()
+  y = y - 24
+  ButtonsRow({
+    { "Show stats", 110, function() NS.PrintStats() end },
+    { "Reset stats", 110, function()
+        NS.db.stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
+        refreshStatsText()
+        print("|cffff2020[LFGAlert]|r Stats reset.")
+      end },
+    { "Clear log", 110, function()
+        NS.ClearLog()
+        print("|cffff2020[LFGAlert]|r Log cleared.")
+      end },
+  })
+  Note("Stats keep the last 30 listings plus all-time totals. Per-listing summary prints to chat on delist.")
+
+  Section("About")
+  Note("Log window: left-click whispers, right-click invites/declines. Full command list: /lfgalert (no args).", 34)
+  ButtonsRow({
+    { "Open applicant log", 150, function() NS.ToggleLogUI(true) end },
+  })
+
+  content:SetHeight(-y + 20)
+  content:SetScript("OnShow", function() refreshStatsText() end)
+
+  -- Register category: new Settings API first, old InterfaceOptions fallback.
+  if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
+    local cat = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+    Settings.RegisterAddOnCategory(cat)
+    NS._settingsCategory = cat
+  elseif InterfaceOptions_AddCategory then
+    pcall(InterfaceOptions_AddCategory, panel)
+  end
+end

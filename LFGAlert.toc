@@ -1,0 +1,11 @@
+## Interface: 120005
+## Title: LFGAlert
+## Notes: Sound alert + applicant log (class / ilvl / M+ score) for your Premade Group listings. Right-click to whisper / invite.
+## Author: LFGAlert
+## Version: 1.0.14
+## SavedVariables: LFGAlertDB
+## IconTexture: Interface\Icons\INV_Misc_Bell_01
+
+Core.lua
+LogFrame.lua
+Options.lua
