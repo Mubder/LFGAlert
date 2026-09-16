@@ -1,7 +1,8 @@
 -- LFGAlert - LogFrame.lua
 -- Scrollable applicant log with right-click whisper/invite/decline.
--- Smooth-scrolling list (FauxScrollFrame, no paging), sortable columns,
--- resizable + position/scale-persistent window, class icons, new-row flash.
+-- Smooth-scrolling list (own row pool + offset, no Blizzard scroll
+-- templates), sortable columns, resizable + position/scale-persistent
+-- window, class icons, new-row flash, lifecycle status icons.
 -- ID-based LFG actions are gated to the current listing session: Blizzard
 -- reuses applicantIDs across delist/relist cycles, so acting on a stale ID
 -- from an old row could invite/decline the wrong current applicant.
@@ -21,8 +22,10 @@ local MAX_ROWS = 60 -- visible row pool cap
 local SCROLL_ZONE = 30 -- right edge of the list kept clear for the scrollbar
 local FLASH_WINDOW = 8 -- seconds a fresh "queued" row keeps pulsing
 
-local logFrame, listArea, scrollFrame, searchBox, countLabel
+local logFrame, listArea, searchBox, countLabel, scrollBar
 local filterButton, classBtn, keyBtn, resetFiltersBtn
+local scrollOffset = 0 -- top visible row index (0-based) into `view`
+local updatingBar = false -- suppress slider feedback while we move it
 local rows = {} -- visible row pool (index = on-screen slot, 1 = top)
 local view = {} -- display-order entries (view[1] = top row)
 local headerWidgets = {}
@@ -662,7 +665,7 @@ local function EntryColumns(entry)
 end
 
 -- ---------------------------------------------------------------------------
--- Render loop (FauxScrollFrame pattern: fixed row pool, offset into `view`)
+-- Render loop (fixed visible row pool, offset into `view`; template-free)
 -- ---------------------------------------------------------------------------
 
 -- Color the lifecycle icons for an entry: reached stages full color, the
@@ -762,14 +765,29 @@ local function RenderRow(row, entry, i)
   end
 end
 
-RenderRows = function()
-  if not (scrollFrame and listArea) then return end
-  local n = #view
-  local visible = math.floor((scrollFrame:GetHeight() or 0) / ROW_HEIGHT + 0.5)
+local function VisibleRowCount()
+  if not listArea then return 1 end
+  local h = (listArea:GetHeight() or 0) - 8 -- 4px padding top/bottom
+  local visible = math.floor(h / ROW_HEIGHT + 0.5)
   if visible < 1 then visible = 1 end
   if visible > MAX_ROWS then visible = MAX_ROWS end
-  FauxScrollFrame_Update(scrollFrame, n, visible, ROW_HEIGHT)
-  local offset = FauxScrollFrame_GetOffset(scrollFrame)
+  return visible
+end
+
+RenderRows = function()
+  if not listArea then return end
+  local n = #view
+  local visible = VisibleRowCount()
+  local maxOff = math.max(0, n - visible)
+  if scrollOffset > maxOff then scrollOffset = maxOff end
+  if scrollOffset < 0 then scrollOffset = 0 end
+  if scrollBar then
+    updatingBar = true
+    scrollBar:SetMinMaxValues(0, maxOff * ROW_HEIGHT)
+    scrollBar:SetValue(scrollOffset * ROW_HEIGHT)
+    updatingBar = false
+    scrollBar:SetShown(n > visible)
+  end
   for i = 1, visible do
     local row = rows[i]
     if not row then
@@ -783,7 +801,7 @@ RenderRows = function()
         return
       end
     end
-    RenderRow(row, view[offset + i], i)
+    RenderRow(row, view[scrollOffset + i], i)
   end
   for i = visible + 1, #rows do
     rows[i]:Hide()
@@ -815,22 +833,9 @@ RenderRows = function()
   end
 end
 
-local function GetScrollBar()
-  if not scrollFrame then return nil end
-  return scrollFrame.scrollBar or _G["LFGAlertLogScrollBar"]
-end
-
 ScrollBy = function(delta)
-  if not scrollFrame then return end
-  local sb = GetScrollBar()
-  if sb and sb.SetValue then
-    local _, maxVal = sb:GetMinMaxValues()
-    local v = sb:GetValue() - delta * ROW_HEIGHT * 3
-    if v < 0 then v = 0 end
-    if v > maxVal then v = maxVal end
-    sb:SetValue(v)
-  end
-  RenderRows() -- in case the template's own wiring differs
+  scrollOffset = scrollOffset + delta * 3 -- RenderRows clamps + updates the bar
+  RenderRows()
 end
 
 -- ---------------------------------------------------------------------------
@@ -951,7 +956,7 @@ end
 -- ---------------------------------------------------------------------------
 
 RefreshNow = function()
-  if not (logFrame and scrollFrame) then return end
+  if not (logFrame and listArea) then return end
   BuildView()
   local n = #view
   local log = (NS.db and NS.db.log) or {}
@@ -976,11 +981,10 @@ RefreshNow = function()
   RefreshHeaderWidgets()
   -- New arrivals snap to top only if the user is already near the top,
   -- so reading history is never yanked around.
-  local sb = GetScrollBar()
-  if n > lastN and sb and sb:GetValue() <= ROW_HEIGHT * 2 then
-    if sb.SetValue then sb:SetValue(0) end
-  elseif n < lastN and sb and sb.SetValue then
-    sb:SetValue(0)
+  if n > lastN and scrollOffset <= 2 then
+    scrollOffset = 0
+  elseif n < lastN then
+    scrollOffset = 0
   end
   lastN = n
   RenderRows()
@@ -1013,7 +1017,7 @@ function NS.GetLogUIState()
     built = logFrame ~= nil,
     shown = logFrame and logFrame:IsShown() or false,
     visibleRows = vis,
-    scrollOffset = (scrollFrame and FauxScrollFrame_GetOffset(scrollFrame)) or 0,
+    scrollOffset = scrollOffset or 0,
   }
 end
 
@@ -1127,13 +1131,44 @@ end
 function NS.BuildLogUI()
   if logFrame then return end
 
-  logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, "BasicFrameTemplateWithInset")
+  -- Preferred chrome; fall back to a hand-rolled backdrop if the template
+  -- is ever missing/renamed in a new patch. pcall so the build never dies
+  -- at step one.
+  local okT, f = pcall(CreateFrame, "Frame", "LFGAlertLogFrame", UIParent, "BasicFrameTemplateWithInset")
+  if okT and f then
+    logFrame = f
+  else
+    logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    if logFrame.SetBackdrop then
+      logFrame:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 32,
+        insets = { left = 8, right = 8, top = 8, bottom = 8 },
+      })
+      logFrame:SetBackdropColor(0.04, 0.06, 0.12, 0.96)
+      logFrame:SetBackdropBorderColor(0.85, 0.68, 0.3, 1)
+    end
+  end
+  -- Hidden FIRST: even if something later in this function errors, the
+  -- window can never end up half-built and visible on login.
+  logFrame:Hide()
+
   if logFrame.SetTitle then
     pcall(logFrame.SetTitle, logFrame, l("log_title", "LFGAlert Applicant Log"))
   end
   if logFrame.TitleText then
     logFrame.TitleText:SetText(l("log_title", "LFGAlert Applicant Log"))
     logFrame.TitleText:SetTextColor(1, 0.82, 0)
+  else
+    local t = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    t:SetPoint("TOP", logFrame, "TOP", 0, -12)
+    t:SetText(l("log_title", "LFGAlert Applicant Log"))
+    t:SetTextColor(1, 0.82, 0)
+  end
+  if not logFrame.ClosePanelButton then
+    local close = CreateFrame("Button", nil, logFrame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -4, -4)
   end
   -- Small bell beside the title bar (brand mark, decorative).
   local bell = logFrame:CreateTexture(nil, "ARTWORK")
@@ -1338,24 +1373,31 @@ function NS.BuildLogUI()
   footLine:SetPoint("BOTTOMLEFT", logFrame, "BOTTOMLEFT", 16, 33)
   footLine:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -16, 33)
 
-  scrollFrame = CreateFrame("ScrollFrame", "LFGAlertLogScroll", listArea, "FauxScrollFrameTemplate")
-  scrollFrame:SetPoint("TOPLEFT", listArea, "TOPLEFT", 0, 0)
-  scrollFrame:SetPoint("BOTTOMRIGHT", listArea, "BOTTOMRIGHT", -SCROLL_ZONE, 0)
+  -- Custom scrollbar: a plain Slider with our own textures — no Blizzard
+  -- scroll template dependency, so a missing/renamed template can never
+  -- break the window. Wheel + thumb-drag both drive `scrollOffset`.
+  scrollBar = CreateFrame("Slider", "LFGAlertLogScrollBar", listArea)
+  scrollBar:SetOrientation("VERTICAL")
+  scrollBar:SetWidth(12)
+  scrollBar:SetPoint("TOPRIGHT", listArea, "TOPRIGHT", -4, -8)
+  scrollBar:SetPoint("BOTTOMRIGHT", listArea, "BOTTOMRIGHT", -4, 8)
+  scrollBar:SetMinMaxValues(0, 0)
+  scrollBar:SetValue(0)
   do
-    local sb = scrollFrame.scrollBar or scrollFrame.ScrollBar or _G["LFGAlertLogScrollBar"]
-    if sb then
-      scrollFrame.scrollBar = sb -- modern FauxScrollFrame_Update reads this
-      sb:ClearAllPoints()
-      sb:SetPoint("TOPLEFT", listArea, "TOPRIGHT", 2, -14)
-      sb:SetPoint("BOTTOMLEFT", listArea, "BOTTOMRIGHT", 2, 12)
-    end
+    local track = scrollBar:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints()
+    track:SetColorTexture(0, 0, 0, 0.35)
+    local thumb = scrollBar:CreateTexture(nil, "ARTWORK")
+    thumb:SetSize(10, 36)
+    thumb:SetColorTexture(0.85, 0.68, 0.30, 0.9)
+    scrollBar:SetThumbTexture(thumb)
   end
-  scrollFrame:SetScript("OnVerticalScroll", function(self, offset)
-    if FauxScrollFrame_OnVerticalScroll then
-      pcall(FauxScrollFrame_OnVerticalScroll, self, offset, ROW_HEIGHT, RenderRows)
-    end
+  scrollBar:SetScript("OnValueChanged", function(_, v)
+    if updatingBar then return end
+    scrollOffset = math.floor(v / ROW_HEIGHT + 0.5)
     RenderRows()
   end)
+  scrollBar:Hide()
 
   -- Footer: reset-filters (left) + hint (bottom center) + entry count (right)
   -- + clear/test buttons (right).

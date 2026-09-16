@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 16 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 17 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -994,9 +994,21 @@ frame:SetScript("OnEvent", function(_, event, ...)
     local name = ...
     if name ~= ADDON_NAME then return end
     InitDB()
-    if NS.BuildLogUI then NS.BuildLogUI() end
-    if NS.BuildMinimapButton then NS.BuildMinimapButton() end
-    if NS.BuildOptions then NS.BuildOptions() end
+    -- Build each part independently: one broken part (e.g. a Blizzard
+    -- template missing in a new patch) must never take down the rest,
+    -- and the failure must be VISIBLE so it can be reported/fixed.
+    local function SafeBuild(label, fn)
+      if not fn then return end
+      local ok, err = pcall(fn)
+      if not ok then
+        NS._buildErrors = NS._buildErrors or {}
+        NS._buildErrors[#NS._buildErrors + 1] = label .. ": " .. tostring(err)
+        print("|cffff2020[LFGAlert]|r " .. label .. " build error: |cffff5555" .. tostring(err) .. "|r")
+      end
+    end
+    SafeBuild("log window", NS.BuildLogUI)
+    SafeBuild("minimap button", NS.BuildMinimapButton)
+    SafeBuild("settings panel", NS.BuildOptions)
     print("|cffffcc00" .. l("msg_loaded", "LFGAlert loaded (build %s). /lfgalert for log & options."):format(tostring(NS.BUILD)) .. "|r")
     return
   end
@@ -1277,6 +1289,9 @@ SlashCmdList["LFGALERT"] = function(msg)
     end
     if NS._rowBuildError then print("  buildError: " .. tostring(NS._rowBuildError)) end
     if NS._lastRenderError then print("  lastRenderError: " .. tostring(NS._lastRenderError)) end
+    if NS._buildErrors then
+      for _, be in ipairs(NS._buildErrors) do print("  buildError: " .. tostring(be)) end
+    end
   elseif cmd == "on" then
     NS.db.enabled = true
     print("|cffff2020[LFGAlert]|r Enabled.")
