@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 17 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 18 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB

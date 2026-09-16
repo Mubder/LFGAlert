@@ -98,6 +98,20 @@ Notes & FAQ
 - Threshold highlights, optional auto-decline, session + all-time stats
 - Custom sounds, minimap button, full settings UI
 
+## Changelog v1.0.18
+
+- Log window reverted to the classic translucent dark-navy backdrop with the
+  gold dialog border (no Blizzard frame template — renders identically on
+  every client); layout re-spaced for the thicker border
+
+## Changelog v1.0.17
+
+- Fixed a login bug on some clients: the log window could appear half-built
+  and the minimap button/settings panel failed to load (a Blizzard scroll
+  template was missing). Scrolling is now fully self-contained, the window
+  hides immediately on creation, and each UI part builds independently with
+  visible error reporting in chat
+
 ## Changelog v1.0.16
 
 - **One row per applicant**: status transitions update the row instead of

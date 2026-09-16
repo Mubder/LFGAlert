@@ -1131,50 +1131,36 @@ end
 function NS.BuildLogUI()
   if logFrame then return end
 
-  -- Preferred chrome; fall back to a hand-rolled backdrop if the template
-  -- is ever missing/renamed in a new patch. pcall so the build never dies
-  -- at step one.
-  local okT, f = pcall(CreateFrame, "Frame", "LFGAlertLogFrame", UIParent, "BasicFrameTemplateWithInset")
-  if okT and f then
-    logFrame = f
-  else
-    logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    if logFrame.SetBackdrop then
-      logFrame:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 8, right = 8, top = 8, bottom = 8 },
-      })
-      logFrame:SetBackdropColor(0.04, 0.06, 0.12, 0.96)
-      logFrame:SetBackdropBorderColor(0.85, 0.68, 0.3, 1)
-    end
+  -- Classic look: translucent dark-navy backdrop + gold dialog border.
+  -- Plain frame + BackdropTemplate only (no Blizzard frame template), so
+  -- the window always renders the same way.
+  logFrame = CreateFrame("Frame", "LFGAlertLogFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+  if logFrame.SetBackdrop then
+    logFrame:SetBackdrop({
+      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+      edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+      tile = true, tileSize = 32, edgeSize = 32,
+      insets = { left = 8, right = 8, top = 8, bottom = 8 },
+    })
+    logFrame:SetBackdropColor(0.04, 0.06, 0.12, 0.96)
+    logFrame:SetBackdropBorderColor(0.85, 0.68, 0.3, 1)
   end
   -- Hidden FIRST: even if something later in this function errors, the
   -- window can never end up half-built and visible on login.
   logFrame:Hide()
 
-  if logFrame.SetTitle then
-    pcall(logFrame.SetTitle, logFrame, l("log_title", "LFGAlert Applicant Log"))
-  end
-  if logFrame.TitleText then
-    logFrame.TitleText:SetText(l("log_title", "LFGAlert Applicant Log"))
-    logFrame.TitleText:SetTextColor(1, 0.82, 0)
-  else
-    local t = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    t:SetPoint("TOP", logFrame, "TOP", 0, -12)
-    t:SetText(l("log_title", "LFGAlert Applicant Log"))
-    t:SetTextColor(1, 0.82, 0)
-  end
-  if not logFrame.ClosePanelButton then
-    local close = CreateFrame("Button", nil, logFrame, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -4, -4)
-  end
-  -- Small bell beside the title bar (brand mark, decorative).
-  local bell = logFrame:CreateTexture(nil, "ARTWORK")
-  bell:SetSize(20, 20)
-  bell:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -8)
+  local bell = logFrame:CreateTexture(nil, "OVERLAY")
+  bell:SetSize(26, 26)
+  bell:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -10)
   bell:SetTexture("Interface\\Icons\\INV_Misc_Bell_01")
+
+  local title = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  title:SetPoint("LEFT", bell, "RIGHT", 8, 0)
+  title:SetText(l("log_title", "LFGAlert Applicant Log"))
+  title:SetTextColor(1, 0.82, 0)
+
+  local close = CreateFrame("Button", nil, logFrame, "UIPanelCloseButton")
+  close:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -4, -4)
 
   local ui = NS.db.ui or {}
   local w = tonumber(ui.w) or DEFAULT_W
@@ -1203,7 +1189,7 @@ function NS.BuildLogUI()
   local dragArea = CreateFrame("Frame", nil, logFrame)
   dragArea:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 8, -6)
   dragArea:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -44, -6)
-  dragArea:SetHeight(30)
+  dragArea:SetHeight(36)
   dragArea:EnableMouse(true)
   dragArea:RegisterForDrag("LeftButton")
   dragArea:SetScript("OnDragStart", function() logFrame:StartMoving() end)
@@ -1231,7 +1217,7 @@ function NS.BuildLogUI()
   -- Search + filter bar.
   searchBox = CreateFrame("EditBox", nil, logFrame, "SearchBoxTemplate")
   searchBox:SetSize(160, 22)
-  searchBox:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 14, -34)
+  searchBox:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 14, -64)
   searchBox:SetAutoFocus(false)
   searchBox:SetMaxLetters(60)
   searchBox:SetScript("OnTextChanged", function(self)
@@ -1246,7 +1232,7 @@ function NS.BuildLogUI()
 
   local function DropLabel(text, x, w)
     local fs = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    fs:SetPoint("LEFT", logFrame, "TOPLEFT", x, -45)
+    fs:SetPoint("LEFT", logFrame, "TOPLEFT", x, -75)
     fs:SetWidth(w)
     fs:SetJustifyH("LEFT")
     fs:SetText(text)
@@ -1256,29 +1242,29 @@ function NS.BuildLogUI()
   DropLabel(l("f_status", "Status:") .. " ", 184, 42)
   filterButton = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
   filterButton:SetSize(100, 22)
-  filterButton:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 228, -34)
+  filterButton:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 228, -64)
   filterButton:SetText(l("fmt_status_btn", "Status: %s"):format(l("filter_all", "All")))
   filterButton:SetScript("OnClick", function(self) ShowFilterMenu(self) end)
 
   DropLabel(l("f_class", "Class:") .. " ", 336, 38)
   classBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
   classBtn:SetSize(110, 22)
-  classBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 376, -34)
+  classBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 376, -64)
   classBtn:SetText(l("fmt_class_btn", "Class: %s"):format(l("filter_all", "All")))
   classBtn:SetScript("OnClick", function(self) ShowClassMenu(self) end)
 
   DropLabel(l("f_key", "Key:") .. " ", 494, 30)
   keyBtn = CreateFrame("Button", nil, logFrame, "UIPanelButtonTemplate")
   keyBtn:SetSize(80, 22)
-  keyBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 526, -34)
+  keyBtn:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 526, -64)
   keyBtn:SetText(l("fmt_key_btn", "Key: %s"):format(l("filter_all", "All")))
   keyBtn:SetScript("OnClick", function(self) ShowKeyMenu(self) end)
 
   -- Header row: same insets + same COLS spec as every data row. Sortable
   -- columns are buttons; the active sort shows an arrow.
   local headerFrame = CreateFrame("Frame", nil, logFrame)
-  headerFrame:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -60)
-  headerFrame:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -12, -60)
+  headerFrame:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -90)
+  headerFrame:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -12, -90)
   headerFrame:SetHeight(16)
   do
     local x = 4 + 2
@@ -1326,18 +1312,18 @@ function NS.BuildLogUI()
   -- Header band: dark strip behind the column headers with a gold edge.
   local band = logFrame:CreateTexture(nil, "BACKGROUND")
   band:SetColorTexture(0, 0, 0, 0.38)
-  band:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 10, -54)
-  band:SetPoint("BOTTOMRIGHT", logFrame, "TOPRIGHT", -10, -80)
+  band:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 10, -84)
+  band:SetPoint("BOTTOMRIGHT", logFrame, "TOPRIGHT", -10, -110)
   local bandEdge = logFrame:CreateTexture(nil, "BACKGROUND")
   bandEdge:SetColorTexture(0.85, 0.68, 0.30, 0.85)
   bandEdge:SetHeight(1)
-  bandEdge:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 10, -80)
-  bandEdge:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -10, -80)
+  bandEdge:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 10, -110)
+  bandEdge:SetPoint("TOPRIGHT", logFrame, "TOPRIGHT", -10, -110)
 
   -- List area with faux scroll frame: fixed visible row pool re-rendered
   -- from the scroll offset (the standard light-weight scroll list pattern).
   listArea = CreateFrame("Frame", nil, logFrame)
-  listArea:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -82)
+  listArea:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 12, -114)
   listArea:SetPoint("BOTTOMRIGHT", logFrame, "BOTTOMRIGHT", -12, 34)
   listArea:EnableMouse(true)
   listArea:SetScript("OnMouseWheel", function(_, delta) ScrollBy(delta) end)
