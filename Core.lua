@@ -811,6 +811,36 @@ end
 -- Scanning
 -- ---------------------------------------------------------------------------
 
+-- Already-terminal statuses: seeing these, a later disappearance needs no row.
+local TERMINAL_STATUSES = {
+  declined = true, declined_full = true, declined_delisted = true,
+  cancelled = true, timedout = true, failed = true,
+  inviteaccepted = true, invitedeclined = true,
+}
+
+local function IsApplicantPresent(applicantID)
+  if not applicantID or not (C_LFGList and C_LFGList.GetApplicants) then return false end
+  local ok, ids = pcall(C_LFGList.GetApplicants)
+  if not ok or type(ids) ~= "table" then return false end
+  for _, id in ipairs(ids) do if id == applicantID then return true end end
+  return false
+end
+
+-- The applicant is gone from Blizzard's list (or their info call fails):
+-- they cancelled, joined, or expired. Synthesize the terminal transition so
+-- the log always shows an ending — but ONLY from non-terminal states, so a
+-- decline/cancel that was already logged is never duplicated.
+local function HandleApplicantGone(applicantID)
+  local prev = known[applicantID]
+  if not prev or not prev.status or TERMINAL_STATUSES[prev.status] then return end
+  local old = prev.status
+  -- Vanished mid-invite almost always means they accepted and joined.
+  local newStatus = (old == "invited") and "inviteaccepted" or "cancelled"
+  known[applicantID] = { status = newStatus, snap = prev.snap, gone = true }
+  NS.AddLogEntry(applicantID, old, newStatus, prev.snap, false)
+  NS.AnnounceStatusChange(applicantID, old, newStatus, prev.snap)
+end
+
 -- Single funnel for "we just fetched a fresh snapshot of an applicant":
 -- both the full-list scan and the per-applicant event path call this, so
 -- new-applicant alerts, status-change logging and data backfill behave
@@ -868,8 +898,12 @@ local function ScanApplicants(reason, retryN)
     end
   end
 
-  -- Applicants that vanished from the API (accepted into group, expired, etc.)
-  -- stay in `known` so we don't re-alert; they are already in the log history.
+  -- Reconcile: known IDs missing from the live list left the queue
+  -- (cancelled, joined, expired). Log the ending exactly once — only from
+  -- non-terminal states, so declines/cancels never double-log.
+  for id in pairs(known) do
+    if not seen[id] then HandleApplicantGone(id) end
+  end
 
   -- Blizzard fires the list event before member details are queryable, so
   -- retry a few times until every visible applicant has data.
@@ -1032,7 +1066,17 @@ frame:SetScript("OnEvent", function(_, event, ...)
       C_Timer.After(0.3, function()
         if not HasActiveListing() then return end
         local snap = SnapshotApplicant(applicantID)
-        if not snap then return end
+        if not snap then
+          -- Info already gone: if they're also off the live list, they left
+          -- (cancelled/joined) — log the ending instead of dropping it.
+          -- If still listed, the data is just late: take one more full pass.
+          if IsApplicantPresent(applicantID) then
+            NS.Rescan("retry")
+          else
+            HandleApplicantGone(applicantID)
+          end
+          return
+        end
         HandleApplicantSnapshot(applicantID, snap, "updated")
         if not SnapHasData(snap) then
           -- Details still not ready: retry a few times, then give up.
@@ -1048,6 +1092,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
                   local p2 = known[applicantID]
                   if p2 then p2.snap = s2 end
                   BackfillLogEntry(applicantID, s2)
+                elseif not IsApplicantPresent(applicantID) then
+                  HandleApplicantGone(applicantID)
                 end
               end)
             end
