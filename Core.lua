@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 19 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 20 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -890,7 +890,9 @@ local function ScanApplicants(reason, retryN)
   local rioMemo = {}
 
   local missingData = false
+  local seen = {} -- applicant IDs present in this scan (used by the reconcile below)
   for _, applicantID in ipairs(ids) do
+    seen[applicantID] = true
     local snap = SnapshotApplicant(applicantID, listing, rioMemo)
     if snap then
       if not SnapHasData(snap) then missingData = true end

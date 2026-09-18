@@ -2,7 +2,7 @@
 ## Title: LFGAlert
 ## Notes: Sound alert + applicant log (class / ilvl / M+ score) for your Premade Group listings. Right-click to whisper / invite.
 ## Author: LFGAlert
-## Version: 1.0.19
+## Version: 1.0.20
 ## SavedVariables: LFGAlertDB
 ## IconTexture: Interface\Icons\INV_Misc_Bell_01
 

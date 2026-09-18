@@ -15,79 +15,25 @@ https://authors.curseforge.com/#/projects/create/choose-game (game: World of War
 
 ## Full description (paste into the project description editor)
 
-LFGAlert — never miss an applicant again. When someone signs up to your Premade
-Group listing you get a sound, a center-screen raid warning, and a full
-applicant log: class, spec, role, item level, and Mythic+ score at a glance.
+LFGAlert — never miss an applicant. The moment someone signs up to your Premade Group you get a sound, a center-screen warning, a taskbar flash and a smart log that tells you who's worth inviting.
 
-📝 Applicant log
-Every applicant gets ONE row. The Status column is a lifecycle icon strip:
-🔔 queued → ⏳ invited → ✅ accepted, plus ✕ for declined/left — stages that
-happened are colored, the rest greyed out, and hovering the row shows the full
-transition timeline with timestamps. Table columns: Time | Applicant |
-Class/Spec | Role | Key | iLvl | M+ Score | Status | Notes. Class icons,
-class-colored names, zebra striping, rows tinted by status (green accepted,
-red declined, gold queued) and fresh applicants flash so you spot them
-instantly. Hover any row for full details: group members, notes, both Blizzard
-and Raider.IO scores.
+📝 One row per applicant with a lifecycle icon strip: queued → invited → accepted, plus ✕ for declined/left — stages that happened are colored, the rest greyed out, and cancellations show the moment someone withdraws. Hover for the full timeline, group members and both Blizzard + Raider.IO scores.
 
-🖱️ Smooth scrolling + sortable columns
-The whole history is one scrollable list — mouse wheel or scrollbar, no paging.
-Click any column header (Time, Applicant, Key, iLvl, M+ Score, Status) to sort
-and find your best applicant in one click. The window is resizable and
-remembers its position, size and scale between sessions.
+🔎 Find your best applicant fast — one scrollable, sortable list (click any column header), a resizable window that remembers its position, size and scale, Status/Class/Key filters, text search and one-click reset.
 
-🗝️ Dungeon + key level
-Each row shows the run it queued for (e.g. +5 AOF), captured from your live
-listing and stored per entry so it survives delists. Queue messages append the
-run too.
+🧙 Know who you're inviting — class-colored names, spec, role, item level and Mythic+ score (Blizzard rating, or Raider.IO automatically when installed). Group applications list every member in the tooltip.
 
-🧙 Know who you're inviting
-Class-colored names, spec, role, item level and Mythic+ score (Blizzard
-rating, or Raider.IO automatically when installed). Group applications list
-every member in the tooltip.
+⚡ Fast, safe actions — one-click whisper / invite / decline buttons plus a right-click menu. Invite and decline only ever act on your current listing, so an old row can never hit the wrong person.
 
-⚡ Fast, safe actions
-One-click whisper / invite / decline buttons on every row, plus a right-click
-menu. Left-click selects a row — no accidental whispers. And because applicant
-IDs reset every time you relist, LFGAlert only sends invite/decline for rows
-from your current listing: it can never act on the wrong person.
+★ Requirements + auto-decline — set a min item level / M+ score: qualifying rows turn green with a star, and optional auto-decline removes the rest for you (always announced, always logged, never fires without real data).
 
-★ Requirements + auto-decline
-Set a min item level / M+ score (sliders in settings): qualifying rows turn
-green with a ★, and optional auto-decline removes undergeared applicants for
-you (announced in chat, always logged, never fires without real data).
+🔔 Four alerts, your call — sound (Master channel, so you hear it even with game audio low), center-screen raid warning, chat message and taskbar flash. Each one toggles independently.
 
-🔎 Filters + search
-Status, Class and minimum-Key filters plus text search (name / spec / dungeon /
-note), one-click "Reset Filters". Auto-declines show their reason
-(Declined (Low ILvl)).
+📊 Stats per listing and all-time (accept rate, accepted ilvl/M+ averages), custom sounds (.ogg/.mp3 or any SoundKit ID), a minimap button (left: open log, right: sound on/off, drag to move) and a full settings UI — Esc → Options → AddOns → LFGAlert.
 
-🔊 Your sound, your way
-SoundKit presets, custom IDs, or your own .ogg/.mp3 file.
+Slash: /lfgalert show, test, sound, minilvl, minscore, autodecline, stats, config and more (/lfga shorthand).
 
-📊 Stats
-Per-listing summary in chat on delist, plus all-time totals, accept rate and
-accepted ilvl/M+ averages.
-
-⚙️ Full settings UI
-Esc → Options → AddOns → LFGAlert (or /lfgalert config): alerts, sound presets
-+ custom file, window scale + reset, threshold sliders, auto-decline, stats.
-
-Slash commands: /lfgalert show, hide, toggle, clear, test, sound, soundfile,
-filter, minilvl, minscore, autodecline, stats, window, open, resetui, config,
-on, off (/lfga shorthand)
-
-Notes & FAQ
-
-• Alerts fire only while you have an active listing (leader).
-• Midnight hides listing/applicant text from addons: LFGAlert strips those
-  unreadable tokens and can use your own keystone for dungeon/key while
-  pushing your key (toggleable in settings).
-• Auto-opening the Group Finder waits until you leave combat.
-• No dependencies. Optional: Raider.IO for RIO scores.
-• History and settings persist per account (up to 300 log rows, last 30
-  listing sessions of stats).
-• Translation-ready (Locales/enUS.lua). MIT licensed.
+Leader-only alerts • no dependencies (Raider.IO optional) • Midnight-ready • MIT licensed
 
 ## First-release changelog (v1.0.14)
 
@@ -97,6 +43,13 @@ Notes & FAQ
   status tints, decline reasons, hover tooltips
 - Threshold highlights, optional auto-decline, session + all-time stats
 - Custom sounds, minimap button, full settings UI
+
+## Changelog v1.0.20
+
+- Fixed "queued then cancelled, but the log never showed it": the
+  vanish-detection loop crashed on every scan (missing lookup table), so
+  cancellations were never logged. Queue → cancel now marks the row
+  CANCELLED (grey X icon, chat line, tooltip timeline)
 
 ## Changelog v1.0.18
 
