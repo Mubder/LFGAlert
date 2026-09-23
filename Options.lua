@@ -11,6 +11,7 @@ local function l(key, fallback) return L[key] or fallback end
 -- ---------------------------------------------------------------------------
 
 local mmButton
+local ShowMinimapMenu -- forward: defined below, used by the minimap OnClick
 
 local function MinimapPos(angleDeg)
   local rad = math.rad(angleDeg or 220)
@@ -62,25 +63,63 @@ function NS.BuildMinimapButton()
   mmButton:SetScript("OnDragStop", function(self)
     self:SetScript("OnUpdate", nil)
   end)
-  mmButton:SetScript("OnClick", function(_, button)
+  mmButton:SetScript("OnClick", function(self, button)
     if button == "LeftButton" then
       NS.ToggleLogUI()
     else
-      NS.db.soundEnabled = not NS.db.soundEnabled
-      print("|cffff2020[LFGAlert]|r Sound " .. (NS.db.soundEnabled and "|cff33cc33" .. l("on", "ON") .. "|r" or "|cffff4444" .. l("off", "OFF") .. "|r"))
+      ShowMinimapMenu(self)
     end
   end)
   mmButton:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:SetText("LFGAlert")
     GameTooltip:AddLine(l("mm_open", "Left-click: open applicant log"), 1, 1, 1)
-    GameTooltip:AddLine(l("mm_sound", "Right-click: sound on/off (now: %s)"):format(NS.db.soundEnabled and l("on", "ON") or l("off", "OFF")), 1, 1, 1)
+    GameTooltip:AddLine(l("mm_menu", "Right-click: options menu (sound, mute, settings)"), 1, 1, 1)
     GameTooltip:AddLine(l("mm_drag", "Drag: move minimap icon"), 0.7, 0.7, 0.7)
     GameTooltip:Show()
   end)
   mmButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   mmButton:SetShown(NS.db and NS.db.showMinimapButton ~= false)
+end
+
+-- Right-click menu: log, quick toggles, settings. Same MenuUtil/EasyMenu
+-- pattern as the log rows, so it works on every client generation.
+ShowMinimapMenu = function(anchor)
+  if MenuUtil and MenuUtil.CreateContextMenu then
+    MenuUtil.CreateContextMenu(anchor, function(_, root)
+      root:CreateTitle("LFGAlert")
+      root:CreateButton(l("mm_menu_log", "Open applicant log"), function()
+        if NS.ToggleLogUI then NS.ToggleLogUI(true) end
+      end)
+      root:CreateCheckbox(l("mm_menu_sound", "Sound alerts"),
+        function() return NS.db.soundEnabled end,
+        function(v) NS.db.soundEnabled = v end)
+      root:CreateCheckbox(l("mm_menu_mute", "Mute everything"),
+        function() return NS.db.muteAll end,
+        function(v) NS.db.muteAll = v end)
+      root:CreateDivider()
+      root:CreateButton(l("mm_menu_settings", "Settings"), function()
+        if NS.OpenSettings then NS.OpenSettings() end
+      end)
+    end)
+    return
+  end
+  if not LFGAlertMinimapMenu then
+    CreateFrame("Frame", "LFGAlertMinimapMenu", UIParent, "UIDropDownMenuTemplate")
+  end
+  local menu = {
+    { text = "LFGAlert", isTitle = true, notCheckable = true },
+    { text = l("mm_menu_log", "Open applicant log"), notCheckable = true,
+      func = function() if NS.ToggleLogUI then NS.ToggleLogUI(true) end end },
+    { text = l("mm_menu_sound", "Sound alerts"), checked = NS.db.soundEnabled, notCheckable = false,
+      func = function() NS.db.soundEnabled = not NS.db.soundEnabled end },
+    { text = l("mm_menu_mute", "Mute everything"), checked = NS.db.muteAll, notCheckable = false,
+      func = function() NS.db.muteAll = not NS.db.muteAll end },
+    { text = l("mm_menu_settings", "Settings"), notCheckable = true,
+      func = function() if NS.OpenSettings then NS.OpenSettings() end end },
+  }
+  EasyMenu(menu, LFGAlertMinimapMenu, "cursor", 0, 0, "MENU")
 end
 
 -- ---------------------------------------------------------------------------
@@ -224,6 +263,28 @@ function NS.BuildOptions()
   verText:SetText(l("opt_version_fmt", "Version %s  •  build %s  •  /lfgalert for commands"):format(tostring(addonVer), tostring(NS.BUILD or "?")))
   y = y - 20
 
+  Section(l("sec_mute", "Mute"))
+  Note(l("note_mute", "Master switches for every noisy part. Mute everything overrides the rows below; muted items stay fully logged."), 34)
+  do
+    local function MuteCB(label, key, extra)
+      local cb = Checkbox(content, label,
+        function() return NS.db[key] end,
+        function(v) NS.db[key] = v if extra then extra(v) end end)
+      cb:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
+      y = y - 30
+      return cb
+    end
+    MuteCB(l("mute_all", "Mute everything (sound, chat, screen, popup)"), "muteAll")
+    MuteCB(l("mute_sound", "Sound alerts"), "soundEnabled")
+    MuteCB(l("mute_chat", "Chat messages"), "chatMessage")
+    MuteCB(l("mute_screen", "Screen warnings"), "raidWarning")
+    MuteCB(l("mute_popup", "Group Finder popup"), "autoOpenLFG")
+    MuteCB(l("mute_flash", "Taskbar flash"), "flashTaskbar")
+    MuteCB(l("mute_summary", "Session summary on delist"), "statsSummary")
+    MuteCB(l("mute_minimap", "Minimap button"), "showMinimapButton",
+      function(v) if mmButton then mmButton:SetShown(v) end end)
+  end
+
   Section(l("sec_general", "General"))
   AddCB(l("cb_enable", "Enable LFGAlert"), function() return NS.db.enabled end,
     function(v) NS.db.enabled = v end)
@@ -246,6 +307,8 @@ function NS.BuildOptions()
         print("|cffff2020[LFGAlert]|r Log window reset.")
       end },
   })
+  AddCB(l("cb_groupbykey", 'Group rows by key ("+10 Altar of Fangs (3)")'), function() return NS.db.groupByKey ~= false end,
+    function(v) NS.db.groupByKey = v if NS.RefreshLogUI then NS.RefreshLogUI(true) end end)
 
   Section(l("sec_alerts", "Alerts & Sound"))
   AddCB(l("cb_sound", "Play sound on new application"), function() return NS.db.soundEnabled end,
@@ -343,6 +406,44 @@ function NS.BuildOptions()
   y = y - 30
   Note(l("note_custom_example", "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  (drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"), 34)
 
+  Section(l("sec_roles", "Alerts by role"))
+  Note(l("note_roles", "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. Log rows, stats and auto-decline are unaffected."), 34)
+  do
+    local roles = {
+      { store = "TANK", show = l("role_tank", "Tank") },
+      { store = "HEALER", show = l("role_healer", "Heal") },
+      { store = "DAMAGER", show = l("role_dps", "DPS") },
+    }
+    local function RoleRow(rowLabel, channel)
+      local lab = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      lab:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y - 6)
+      lab:SetWidth(110)
+      lab:SetJustifyH("LEFT")
+      lab:SetText(rowLabel)
+      local bx = 140
+      for _, r in ipairs(roles) do
+        local store = r.store
+        local cb = Checkbox(content, r.show,
+          function()
+            local c = NS.db.alertRoles and NS.db.alertRoles[channel]
+            return c == nil or c[store] ~= false
+          end,
+          function(v)
+            NS.db.alertRoles = NS.db.alertRoles or {}
+            NS.db.alertRoles[channel] = NS.db.alertRoles[channel] or {}
+            NS.db.alertRoles[channel][store] = v
+          end)
+        cb:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
+        bx = bx + 95
+      end
+      y = y - 30
+    end
+    RoleRow(l("row_sound", "Sound for:"), "sound")
+    RoleRow(l("row_chat", "Chat for:"), "chat")
+    RoleRow(l("row_screen", "Screen alert for:"), "screen")
+    RoleRow(l("row_popup", "Popup for:"), "popup")
+  end
+
   Section(l("sec_req", "Requirements (highlight * + auto-decline)"))
   Note(l("note_req", "Rows at/above these get a * and green numbers, and auto-decline judges by them. 0 = off. Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."), 34)
 
@@ -367,7 +468,8 @@ function NS.BuildOptions()
   statsText:SetWidth(560)
   statsText:SetJustifyH("LEFT")
   local function refreshStatsText()
-    local st = NS.db and NS.db.stats and NS.db.stats.total
+    local D = NS.Data()
+    local st = D and D.stats and D.stats.total
     if st then
       local au = st.auto or 0
       statsText:SetText(l("stats_summary_fmt", "All time: %d queued • %d accepted • %d declined%s"):format(
@@ -379,10 +481,13 @@ function NS.BuildOptions()
   end
   refreshStatsText()
   y = y - 24
+  AddCB(l("cb_perchar", "Separate log & stats per character (default: shared)"), function() return NS.db.perCharLog end,
+    function(v) if NS.SetPerCharLog then NS.SetPerCharLog(v) else NS.db.perCharLog = v end end)
+  Note(l("note_perchar", "Switching keeps both histories; each character starts fresh."), 22)
   ButtonsRow({
     { l("btn_show_stats", "Show stats"), 110, function() NS.PrintStats() end },
     { l("btn_reset_stats", "Reset stats"), 110, function()
-        NS.db.stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
+        NS.Data().stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
         refreshStatsText()
         print("|cffff2020[LFGAlert]|r Stats reset.")
       end },
@@ -409,5 +514,18 @@ function NS.BuildOptions()
     NS._settingsCategory = cat
   elseif InterfaceOptions_AddCategory then
     pcall(InterfaceOptions_AddCategory, panel)
+  end
+end
+
+-- Open the settings panel (used by /lfgalert config and the minimap menu).
+function NS.OpenSettings()
+  if Settings and Settings.OpenToCategory and NS._settingsCategory then
+    local okC, id = pcall(function() return NS._settingsCategory:GetID() end)
+    if okC and id then pcall(Settings.OpenToCategory, id) return end
+  end
+  if InterfaceOptionsFrame_OpenToCategory then
+    pcall(InterfaceOptionsFrame_OpenToCategory, "LFGAlert")
+  else
+    print("|cffff2020[LFGAlert]|r Open with Esc > Options > AddOns > LFGAlert")
   end
 end

@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 20 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 28 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -45,6 +45,21 @@ local DEFAULTS = {
   assumeOwnKey = true,
   -- Auto-decline applicants below minIlvl/minScore (default OFF).
   autoDecline = false,
+  -- Master + session-summary mutes (everything else has its own checkbox).
+  muteAll = false,
+  statsSummary = true,
+  -- Log scope: shared account-wide by default; perCharLog splits per character.
+  perCharLog = false,
+  chars = {},
+  -- Group log rows under their key ("+10 Altar of Fangs (3)").
+  groupByKey = true,
+  -- Per-role alert gates, one set per channel (all ON = current behavior).
+  alertRoles = {
+    sound = { TANK = true, HEALER = true, DAMAGER = true },
+    chat = { TANK = true, HEALER = true, DAMAGER = true },
+    screen = { TANK = true, HEALER = true, DAMAGER = true },
+    popup = { TANK = true, HEALER = true, DAMAGER = true },
+  },
   stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } },
   log = {}, -- persisted entries
 }
@@ -352,24 +367,33 @@ local function ShortName(fullName)
 end
 NS.ShortName = ShortName
 
+-- UTF-8 safe shortener for chat notes.
+local function TruncNote(s, n)
+  if not s or s == "" then return "" end
+  if #s <= n then return s end
+  local cut = s:sub(1, n - 1)
+  cut = cut:gsub("[\194-\244][\128-\191]*$", "")
+  return cut .. "..."
+end
+
+-- One compact chat line fragment: role + spec + numbers + run + note.
+-- Callers prefix "Name: STATUS - ". No duplicated name, no extra lines.
 local function MemberSummary(snap)
   local m = PrimaryMember(snap)
-  if not m then return "?  -  ilvl -  -  M+ -" end
-  local classCol = ClassColorize(m.class, ShortName(m.name))
+  if not m then return "?" end
   local roleTag = NS.RoleTag(NS.ResolveRole(m))
-  local specTxt = m.specName or m.localizedClass or m.class or ""
   local ilvl = (m.itemLevel and m.itemLevel > 0) and tostring(math.floor(m.itemLevel)) or "-"
   local score = FormatScore(m.dungeonScore, m.rioScore)
-  local extra = ""
-  if (snap.numMembers or 1) > 1 then
-    extra = " (+" .. ((snap.numMembers or 1) - 1) .. ")"
-  end
-  local runTag = ""
+  local s = roleTag .. ", ilvl " .. ilvl .. ", M+ " .. score
   local li = snap and snap.listing
   if li and (li.dungeon or li.key) then
-    runTag = "  |cffffd100[" .. (li.key and ("+" .. li.key .. " ") or "") .. (li.dungeon or "?") .. "]|r"
+    s = s .. "  |cffffd100[" .. (li.key and ("+" .. li.key .. " ") or "") .. (li.dungeon or "?") .. "]|r"
   end
-  return string.format("%s%s  %s  %s  ilvl %s  M+ %s%s", classCol, extra, roleTag, specTxt, ilvl, score, runTag)
+  local note = snap and snap.comment
+  if note and note ~= "" then
+    s = s .. '  |cff88bbff"' .. TruncNote(note, 60) .. '"|r'
+  end
+  return s
 end
 
 -- ---------------------------------------------------------------------------
@@ -409,6 +433,16 @@ function NS.ResolveRole(mem)
   return nil
 end
 
+-- Blizzard's INLINE_*_ICON globals changed shape across patches (classic
+-- texture tags vs atlas markup), and broken markup renders as "???" in chat.
+-- Only trust classic texture tags; otherwise fall back to the colored label.
+local function SafeRoleIcon(iconKey)
+  local s = iconKey and _G[iconKey]
+  if type(s) ~= "string" or s == "" then return "" end
+  if not s:match("^|TInterface\\.+|t$") then return "" end
+  return s
+end
+
 -- Returns coloredTag, plainLabel. Role icons resolve lazily via _G so this
 -- is safe even when Blizzard's UI addons haven't loaded yet (falls back to text).
 function NS.RoleTag(role)
@@ -421,9 +455,22 @@ function NS.RoleTag(role)
   elseif key == "DAMAGER" then
     label, color, iconKey = l("role_dps", "DPS"), "ff6b6b", "INLINE_DAMAGER_ICON"
   end
-  local icon = (iconKey and _G[iconKey]) or ""
+  local icon = SafeRoleIcon(iconKey)
   if icon ~= "" then icon = icon .. " " end
   return icon .. "|cff" .. color .. label .. "|r", label
+end
+
+-- Per-role alert gate for one channel ("sound" | "chat" | "screen").
+-- Unknown role (no data yet) always passes; only a KNOWN unchecked role mutes.
+-- Missing config also passes, preserving old behavior.
+local function RoleAlertAllowed(channel, mem)
+  local cfg = NS.db and NS.db.alertRoles and NS.db.alertRoles[channel]
+  if cfg == nil then return true end
+  local role = NS.ResolveRole(mem)
+  if not role then return true end
+  local v = cfg[role]
+  if v == nil then return true end
+  return v and true or false
 end
 
 -- ---------------------------------------------------------------------------
@@ -432,8 +479,9 @@ end
 
 local function TrimLog()
   local maxN = (NS.db and NS.db.maxLogEntries) or 300
-  while #NS.db.log > maxN do
-    table.remove(NS.db.log, 1)
+  local D = NS.Data()
+  while #D.log > maxN do
+    table.remove(D.log, 1)
   end
 end
 
@@ -465,6 +513,54 @@ end
 -- it here. Sessions are keyed by listingSession; only the last 30 are kept.
 -- ---------------------------------------------------------------------------
 
+local function CharKey()
+  return (UnitName("player") or "?") .. "-" .. (GetRealmName() or "?")
+end
+
+-- Active DATA store (log + stats). All SETTINGS stay account-wide on NS.db.
+-- Default is one shared log; perCharLog (opt-in) splits log+stats per char.
+-- Switching preserves both sides: shared history stays in LFGAlertDB.log.
+function NS.Data()
+  NS.db = NS.db or LFGAlertDB
+  if NS.db and NS.db.perCharLog then
+    NS.db.chars = NS.db.chars or {}
+    local k = CharKey()
+    local c = NS.db.chars[k]
+    if type(c) ~= "table" then
+      c = { log = {}, stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } } }
+      NS.db.chars[k] = c
+    end
+    if type(c.log) ~= "table" then c.log = {} end
+    return c
+  end
+  return NS.db or {}
+end
+
+local function DeepCopy(t, seen)
+  if type(t) ~= "table" then return t end
+  seen = seen or {}
+  if seen[t] then return seen[t] end
+  local c = {}
+  seen[t] = c
+  for k, v in pairs(t) do c[DeepCopy(k, seen)] = DeepCopy(v, seen) end
+  return c
+end
+
+-- Toggle the per-character log. First enable seeds the fresh character store
+-- from shared history, so flipping the switch never looks like data loss.
+function NS.SetPerCharLog(v)
+  NS.db.perCharLog = v and true or false
+  if v and LFGAlertDB and type(LFGAlertDB.log) == "table" and #LFGAlertDB.log > 0 then
+    local D = NS.Data()
+    if #(D.log or {}) == 0 then
+      D.log = DeepCopy(LFGAlertDB.log)
+      if type(LFGAlertDB.stats) == "table" then D.stats = DeepCopy(LFGAlertDB.stats) end
+      ChatMessage("Per-character log ON: seeded " .. #D.log .. " stored rows from shared history.")
+    end
+  end
+  if NS.RefreshLogUI then NS.RefreshLogUI(true) end
+end
+
 local autoPending = {} -- applicantID -> true while OUR auto-decline is in flight
 
 local function BucketFor(status)
@@ -476,16 +572,15 @@ local function BucketFor(status)
 end
 
 local function EnsureStats()
-  if type(LFGAlertDB) ~= "table" then return nil end
-  NS.db = NS.db or LFGAlertDB
-  if type(NS.db.stats) ~= "table" then
-    NS.db.stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
+  local D = NS.Data()
+  if type(D.stats) ~= "table" then
+    D.stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
   end
-  if type(NS.db.stats.sessions) ~= "table" then NS.db.stats.sessions = {} end
-  if type(NS.db.stats.total) ~= "table" then
-    NS.db.stats.total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 }
+  if type(D.stats.sessions) ~= "table" then D.stats.sessions = {} end
+  if type(D.stats.total) ~= "table" then
+    D.stats.total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 }
   end
-  return NS.db.stats
+  return D.stats
 end
 
 function NS.RecordStat(applicantID, status, session)
@@ -541,7 +636,7 @@ function NS.PrintStats()
   print("  " .. StatLine(l("all_time", "All time"), st.total))
   -- Accepted quality averages from stored log rows.
   local n, ilvlSum, scoreSum, scoreN = 0, 0, 0, 0
-  for _, e in ipairs((NS.db and NS.db.log) or {}) do
+  for _, e in ipairs(NS.Data().log or {}) do
     if not e.separator and e.status == "inviteaccepted" and e.members and e.members[1] and e.members[1].name then
       local m = e.members[1]
       n = n + 1
@@ -566,8 +661,9 @@ function NS.AddLogEntry(applicantID, oldStatus, newStatus, snap, isNewApplicant)
   -- the existing row (shown as lifecycle icons in the log) instead of
   -- stacking separate "Queued" / "Invited" / "Accepted" rows.
   local entry
-  for i = #NS.db.log, 1, -1 do
-    local e = NS.db.log[i]
+  local D = NS.Data()
+  for i = #D.log, 1, -1 do
+    local e = D.log[i]
     if e and not e.separator and e.applicantID == applicantID
       and (e.session == nil or e.session == listingSession) then
       entry = e
@@ -577,6 +673,16 @@ function NS.AddLogEntry(applicantID, oldStatus, newStatus, snap, isNewApplicant)
 
   local now = time()
   if entry then
+    if entry.session == nil then
+      -- Adopted from before session tracking: drop stale listing context
+      -- (dungeon/key/history from a previous listing) so everything below
+      -- refills fresh. This is what once showed last week's key on new rows.
+      entry.session = listingSession
+      entry.t = now
+      entry.dungeon, entry.dungeonFull, entry.key, entry.keySource, entry.listingTitle = nil, nil, nil, nil, nil
+      entry.declineReason, entry.autoDeclined = nil, nil
+      entry.history = {}
+    end
     entry.oldStatus = oldStatus
     entry.status = newStatus
     -- A (re-)application surfaces the row as fresh again.
@@ -614,7 +720,7 @@ function NS.AddLogEntry(applicantID, oldStatus, newStatus, snap, isNewApplicant)
       history = { { status = newStatus, t = now } },
     }
     CopySnapMembers(entry.members, snap)
-    NS.db.log[#NS.db.log + 1] = entry
+    D.log[#D.log + 1] = entry
   end
   if BucketFor(newStatus) == "declined" and NS._autoReason then
     local ar = NS._autoReason[applicantID]
@@ -633,7 +739,7 @@ function NS.AddLogEntry(applicantID, oldStatus, newStatus, snap, isNewApplicant)
 end
 
 function NS.ClearLog()
-  if NS.db then NS.db.log = {} end
+  NS.Data().log = {}
   if NS.RefreshLogUI then NS.RefreshLogUI() end
 end
 
@@ -641,8 +747,17 @@ end
 -- Alerts
 -- ---------------------------------------------------------------------------
 
-function NS.PlayAlertSound()
+local lastSoundKey, lastSoundAt = nil, 0
+
+function NS.PlayAlertSound(tag)
   if not NS.db or not NS.db.soundEnabled then return end
+  -- Debounce: the same trigger arriving twice within 3s (double events)
+  -- plays once. Distinct applicants carry distinct tags and always play.
+  if tag then
+    local now = GetTime()
+    if tag == lastSoundKey and (now - lastSoundAt) < 3 then return end
+    lastSoundKey, lastSoundAt = tag, now
+  end
   local channel = NS.db.useMasterChannel and "Master" or nil
   -- Custom sound file takes precedence when enabled and set.
   if NS.db.useCustomSound and NS.db.customSoundPath and NS.db.customSoundPath ~= "" then
@@ -698,34 +813,50 @@ local function ChatMessage(text)
 end
 
 function NS.AlertNewApplicant(applicantID, snap)
-  NS.PlayAlertSound()
+  if NS.db and NS.db.muteAll then return end -- master mute: log still records
+  local pm = PrimaryMember(snap)
+  if NS.db and NS.db.traceAlerts then
+    print(string.format("[LFGAlert] trace #%s role=%s sound=%s chat=%s screen=%s popup=%s",
+      tostring(applicantID), tostring(NS.ResolveRole(pm)),
+      tostring(RoleAlertAllowed("sound", pm)), tostring(RoleAlertAllowed("chat", pm)),
+      tostring(RoleAlertAllowed("screen", pm)), tostring(RoleAlertAllowed("popup", pm))))
+  end
+  if RoleAlertAllowed("sound", pm) then NS.PlayAlertSound("new:" .. tostring(applicantID)) end
   if NS.db and NS.db.flashTaskbar and FlashClientIcon then
     pcall(FlashClientIcon)
   end
-  if NS.db and NS.db.autoOpenLFG then
+  if NS.db and NS.db.autoOpenLFG and RoleAlertAllowed("popup", pm) then
     NS.OpenApplicants()
   end
   if not SnapHasData(snap) then
     -- Details not ready yet: keep the sound + a generic banner now;
-    -- BackfillLogEntry prints the full line + fills the log row on retry.
-    CenterMessage(l("alert_banner", "New applicant!"))
+    -- BackfillLogEntry prints the compact line once data lands.
+    if RoleAlertAllowed("screen", pm) then
+      CenterMessage(l("alert_banner", "New applicant!"))
+    end
     return
   end
-  local summary = MemberSummary(snap)
-  local pm = PrimaryMember(snap)
   local name = pm and pm.name or ("#" .. tostring(applicantID))
   local _, rolePlain = NS.RoleTag(NS.ResolveRole(pm))
-  CenterMessage(l("alert_center_fmt", "New applicant: %s (%s)"):format(ShortName(name), rolePlain))
-  ChatMessage(l("alert_chat_fmt", "New applicant: %s"):format(summary))
-  if snap and snap.comment and snap.comment ~= "" then
-    ChatMessage(l("note_fmt", 'Note: "%s"'):format(snap.comment))
+  if RoleAlertAllowed("screen", pm) then
+    CenterMessage(l("alert_center_fmt", "New applicant: %s (%s)"):format(ShortName(name), rolePlain))
+  end
+  if RoleAlertAllowed("chat", pm) then
+    local qLabel, qColor = NS.StatusLabel("applied")
+    ChatMessage(ShortName(name) .. ": |cff" .. qColor .. qLabel .. "|r - " .. MemberSummary(snap))
   end
 end
 
 function NS.AnnounceStatusChange(applicantID, oldStatus, newStatus, snap)
+  -- Flood control: chat only for fresh invites. Accepts, declines and leaves
+  -- live in the log (and stats) only.
+  if newStatus ~= "invited" then return end
+  if NS.db and NS.db.muteAll then return end
+  local pm = PrimaryMember(snap)
+  if not RoleAlertAllowed("chat", pm) then return end
   local label, color = NS.StatusLabel(newStatus)
-  local summary = MemberSummary(snap)
-  ChatMessage(string.format("%s: |cff%s%s|r - %s", ShortName(PrimaryMember(snap) and PrimaryMember(snap).name or ("#" .. applicantID)), color, label, summary))
+  local name = (pm and pm.name) or ("#" .. tostring(applicantID))
+  ChatMessage(ShortName(name) .. ": |cff" .. color .. label .. "|r - " .. MemberSummary(snap))
 end
 
 -- Member data is often unavailable on the first event (Blizzard sends the
@@ -733,9 +864,10 @@ end
 -- data arrives, and prints the full detail line if it was skipped earlier.
 local function BackfillLogEntry(applicantID, snap)
   if not SnapHasData(snap) then return false end
-  if not (NS.db and NS.db.log) then return false end
+  local D = NS.Data()
+  if type(D.log) ~= "table" then return false end
   local changed = false
-  for _, e in ipairs(NS.db.log) do
+  for _, e in ipairs(D.log) do
     if not e.separator and e.applicantID == applicantID and (e.session == nil or e.session == listingSession) then
       local em = e.members and e.members[1]
       if not (em and em.name) then
@@ -749,9 +881,12 @@ local function BackfillLogEntry(applicantID, snap)
         end
         if not e.detailShown then
           e.detailShown = true
-          ChatMessage(l("alert_chat_fmt", "New applicant: %s"):format(MemberSummary({ members = e.members, numMembers = e.numMembers, comment = e.comment, listing = snap.listing })))
-          if e.comment and e.comment ~= "" then
-            ChatMessage(l("note_fmt", 'Note: "%s"'):format(e.comment))
+          local bSnap = { members = e.members, numMembers = e.numMembers, comment = e.comment, listing = snap.listing }
+          local bMem = bSnap.members and bSnap.members[1]
+          if RoleAlertAllowed("chat", bMem) and not (NS.db and NS.db.muteAll) then
+            local bName = (bMem and bMem.name) or ("#" .. tostring(applicantID))
+            local bLabel, bColor = NS.StatusLabel("applied")
+            ChatMessage(ShortName(bName) .. ": |cff" .. bColor .. bLabel .. "|r - " .. MemberSummary(bSnap))
           end
         end
         -- MaybeAutoDecline re-verifies the applicant is still pending, so it
@@ -832,13 +967,31 @@ end
 -- decline/cancel that was already logged is never duplicated.
 local function HandleApplicantGone(applicantID)
   local prev = known[applicantID]
-  if not prev or not prev.status or TERMINAL_STATUSES[prev.status] then return end
-  local old = prev.status
-  -- Vanished mid-invite almost always means they accepted and joined.
+  local old, snap = prev and prev.status, prev and prev.snap
+  if (not old or TERMINAL_STATUSES[old]) and not prev then
+    -- `known` is wiped on every reload: fall back to the persisted row so
+    -- cancellations of previously-logged applicants still show an ending.
+    local D = NS.Data()
+    if type(D.log) == "table" then
+      for i = #D.log, 1, -1 do
+        local e = D.log[i]
+        if e and not e.separator and e.applicantID == applicantID
+          and (e.session == nil or e.session == listingSession)
+          and e.status and not TERMINAL_STATUSES[e.status] then
+          old = e.status
+          snap = { members = e.members, numMembers = e.numMembers, comment = e.comment,
+            listing = { dungeon = e.dungeon, dungeonFull = e.dungeonFull, key = e.key,
+              source = e.keySource, title = e.listingTitle } }
+          break
+        end
+      end
+    end
+  end
+  if not old or TERMINAL_STATUSES[old] then return end
   local newStatus = (old == "invited") and "inviteaccepted" or "cancelled"
-  known[applicantID] = { status = newStatus, snap = prev.snap, gone = true }
-  NS.AddLogEntry(applicantID, old, newStatus, prev.snap, false)
-  NS.AnnounceStatusChange(applicantID, old, newStatus, prev.snap)
+  known[applicantID] = { status = newStatus, snap = snap, gone = true }
+  NS.AddLogEntry(applicantID, old, newStatus, snap, false)
+  NS.AnnounceStatusChange(applicantID, old, newStatus, snap)
 end
 
 -- Single funnel for "we just fetched a fresh snapshot of an applicant":
@@ -862,9 +1015,11 @@ local function HandleApplicantSnapshot(applicantID, snap, reason)
     known[applicantID] = { status = snap.status, snap = snap }
     NS.AddLogEntry(applicantID, old, snap.status, snap, false)
     NS.AnnounceStatusChange(applicantID, old, snap.status, snap)
-    -- Re-alert if they re-applied after cancel/decline
-    if snap.status == "applied" and reason == "list" then
-      NS.PlayAlertSound()
+    -- Re-alert if they re-applied after cancel/decline (role-gated like
+    -- first sighting; tagged so a double event still plays once).
+    if snap.status == "applied" and reason == "list"
+      and RoleAlertAllowed("sound", PrimaryMember(snap)) then
+      NS.PlayAlertSound("requeue:" .. tostring(applicantID))
     end
   else
     -- Same status: refresh snapshot (ilvl/score may have resolved late)
@@ -924,16 +1079,17 @@ function NS.WipeKnown(reasonLabel)
   if reasonLabel then
     local st = EnsureStats()
     local s = st and st.sessions[listingSession]
-    if s and (s.queued or 0) > 0 then
+    if s and (s.queued or 0) > 0 and NS.db.statsSummary ~= false then
       ChatMessage(StatLine(l("listing_over", "Listing over"), s))
     end
   end
   wipe(known)
   wipe(autoPending)
   if NS._autoReason then wipe(NS._autoReason) end
-  if reasonLabel and NS.db and NS.db.log then
+  local D = NS.Data()
+  if reasonLabel and type(D.log) == "table" then
     -- Visual separator in the log so sessions don't blur together.
-    NS.db.log[#NS.db.log + 1] = { t = time(), separator = l("sep_ended", "— listing ended —") }
+    D.log[#D.log + 1] = { t = time(), separator = l("sep_ended", "— listing ended —") }
     TrimLog()
     if NS.RefreshLogUI then NS.RefreshLogUI() end
   end
@@ -1213,20 +1369,37 @@ SlashCmdList["LFGALERT"] = function(msg)
     elseif rest == "off" then NS.db.autoOpenLFG = false
     else NS.db.autoOpenLFG = not NS.db.autoOpenLFG end
     print("|cffff2020[LFGAlert]|r Auto-open LFG window " .. (NS.db.autoOpenLFG and "ON" or "OFF"))
+  elseif cmd == "mute" then
+    -- /lfgalert mute [on|off] - master mute for sound/chat/screen/popup
+    if rest == "on" then NS.db.muteAll = true
+    elseif rest == "off" then NS.db.muteAll = false
+    else NS.db.muteAll = not NS.db.muteAll end
+    print("|cffff2020[LFGAlert]|r All alerts " .. (NS.db.muteAll and "MUTED" or "ON") .. " (log keeps recording)")
+  elseif cmd == "trace" then
+    -- /lfgalert trace [on|off] - one-line alert decision dump per queue
+    if rest == "on" then NS.db.traceAlerts = true
+    elseif rest == "off" then NS.db.traceAlerts = nil
+    else NS.db.traceAlerts = not NS.db.traceAlerts and true or nil end
+    print("|cffff2020[LFGAlert]|r Alert tracing " .. (NS.db.traceAlerts and "ON" or "OFF"))
+  elseif cmd == "groupbykey" then
+    -- /lfgalert groupbykey [on|off] - group log rows under their key
+    if rest == "on" then NS.db.groupByKey = true
+    elseif rest == "off" then NS.db.groupByKey = false
+    else NS.db.groupByKey = not NS.db.groupByKey end
+    print("|cffff2020[LFGAlert]|r Group by key " .. (NS.db.groupByKey and "ON" or "OFF"))
+    if NS.RefreshLogUI then NS.RefreshLogUI(true) end
   elseif cmd == "open" then
     NS.OpenApplicants()
+  elseif cmd == "mute" then
+    if rest == "on" then NS.db.muteAll = true
+    elseif rest == "off" then NS.db.muteAll = false
+    else NS.db.muteAll = not NS.db.muteAll end
+    print("|cffff2020[LFGAlert]|r All alerts " .. (NS.db.muteAll and "MUTED" or "ON") .. " (log keeps recording)")
   elseif cmd == "resetui" then
     if NS.ResetUI then NS.ResetUI() end
     print("|cffff2020[LFGAlert]|r Log window reset (position / size / scale).")
   elseif cmd == "config" or cmd == "options" or cmd == "settings" then
-    if Settings and Settings.OpenToCategory and NS._settingsCategory then
-      local okC, id = pcall(function() return NS._settingsCategory:GetID() end)
-      if okC and id then pcall(Settings.OpenToCategory, id) end
-    elseif InterfaceOptionsFrame_OpenToCategory then
-      pcall(InterfaceOptionsFrame_OpenToCategory, "LFGAlert")
-    else
-      print("|cffff2020[LFGAlert]|r Open with Esc > Options > AddOns > LFGAlert")
-    end
+    if NS.OpenSettings then NS.OpenSettings() end
   elseif cmd == "mouse" then
     -- Hover the empty list, wait 3s, then see which frames eat the mouse.
     print("|cffff2020[LFGAlert]|r Hover the EMPTY list area now (printing in 3s)...")
@@ -1303,7 +1476,7 @@ SlashCmdList["LFGALERT"] = function(msg)
   elseif cmd == "stats" then
     NS.PrintStats()
   elseif cmd == "debug" then
-    local log = (NS.db and NS.db.log) or {}
+    local log = NS.Data().log or {}
     local fst = (NS.logFilter and NS.logFilter.status) or "?"
     local q = (NS.logFilter and NS.logFilter.query) or ""
     print(string.format("|cffff2020[LFGAlert]|r debug [build %s]: %d stored, filter=%s search=\"%s\"", tostring(NS.BUILD), #log, fst, q))
@@ -1337,6 +1510,21 @@ SlashCmdList["LFGALERT"] = function(msg)
       if p.renderErr then print("  renderErr: " .. tostring(p.renderErr)) end
     end
     if NS._rowBuildError then print("  buildError: " .. tostring(NS._rowBuildError)) end
+    do
+      local ar = NS.db and NS.db.alertRoles
+      local function g(ch, role)
+        local c = ar and ar[ch]
+        if c == nil then return "on" end
+        local v = c[role]
+        if v == nil then return "on" end
+        return v and "on" or "OFF"
+      end
+      print(string.format("  gates: sound T/H/D=%s/%s/%s chat=%s/%s/%s screen=%s/%s/%s popup=%s/%s/%s",
+        g("sound", "TANK"), g("sound", "HEALER"), g("sound", "DAMAGER"),
+        g("chat", "TANK"), g("chat", "HEALER"), g("chat", "DAMAGER"),
+        g("screen", "TANK"), g("screen", "HEALER"), g("screen", "DAMAGER"),
+        g("popup", "TANK"), g("popup", "HEALER"), g("popup", "DAMAGER")))
+    end
     if NS._lastRenderError then print("  lastRenderError: " .. tostring(NS._lastRenderError)) end
     if NS._buildErrors then
       for _, be in ipairs(NS._buildErrors) do print("  buildError: " .. tostring(be)) end
@@ -1363,6 +1551,8 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("  /lfgalert minkey <n> - only keys >= n (0 = all)")
     print("  /lfgalert window [on|off] - auto-open Group Finder applicants on queue")
     print("  /lfgalert open - open Group Finder applicants now")
+    print("  /lfgalert mute [on|off] - master mute for sound/chat/screen/popup")
+    print("  /lfgalert groupbykey [on|off] - group log rows under their key")
     print("  /lfgalert resetui - reset log window position / size / scale")
     print("  /lfgalert stats - session + all-time summary")
     print("  /lfgalert debug - dump log state (entries/filter/window)")

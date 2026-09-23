@@ -35,7 +35,7 @@ Slash: /lfgalert show, test, sound, minilvl, minscore, autodecline, stats, confi
 
 Leader-only alerts • no dependencies (Raider.IO optional) • Midnight-ready • MIT licensed
 
-## First-release changelog (v1.0.14)
+## First-release changelog (v1.0.20)
 
 - Sound + raid-warning + chat alert on new applications, leader-only
 - Auto-opens Group Finder on the applicant list

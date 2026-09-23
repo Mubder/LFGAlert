@@ -172,7 +172,36 @@ L.note_about  = "Log window: scroll to browse history, click column headers to s
 
 -- Minimap button
 L.mm_open  = "Left-click: open applicant log"
-L.mm_sound = "Right-click: sound on/off (now: %s)"
+L.mm_menu   = "Right-click: options menu (sound, mute, settings)"
 L.mm_drag  = "Drag: move minimap icon"
+L.mm_menu_log = "Open applicant log"
+L.mm_menu_sound = "Sound alerts"
+L.mm_menu_mute = "Mute everything"
+L.mm_menu_settings = "Settings"
 L.on  = "ON"
 L.off = "OFF"
+
+-- Mute board
+L.sec_mute    = "Mute"
+L.note_mute   = "Master switches for every noisy part. Mute everything overrides the rows below; muted items stay fully logged."
+L.mute_all    = "Mute everything (sound, chat, screen, popup)"
+L.mute_sound  = "Sound alerts"
+L.mute_chat   = "Chat messages"
+L.mute_screen = "Screen warnings"
+L.mute_popup  = "Group Finder popup"
+L.mute_flash  = "Taskbar flash"
+L.mute_summary = "Session summary on delist"
+L.mute_minimap = "Minimap button"
+
+-- Log scope + grouping
+L.cb_perchar   = "Separate log & stats per character (default: shared)"
+L.note_perchar = "Switching keeps both histories; each character starts fresh."
+L.cb_groupbykey = 'Group rows by key ("+10 Altar of Fangs (3)")'
+
+-- Alerts by role
+L.sec_roles  = "Alerts by role"
+L.note_roles = "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. Log rows, stats and auto-decline are unaffected."
+L.row_sound  = "Sound for:"
+L.row_chat   = "Chat for:"
+L.row_screen = "Screen alert for:"
+L.row_popup = "Popup for:"

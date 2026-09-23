@@ -176,6 +176,8 @@ function NS.ResetLogFilters()
   NS.logFilter.class = "ALL"
   NS.logFilter.minKey = 0
   NS.logFilter.query = ""
+  sortKey, sortDir = "time", "desc" -- newest queued on top, always recoverable
+  scrollOffset = 0
   if searchBox then searchBox:SetText("") end -- fires OnTextChanged -> refresh
   if NS.RefreshLogUI then NS.RefreshLogUI(true) end
 end
@@ -201,17 +203,18 @@ local function EntryMatches(entry)
   end
   local q = f.query
   if q and q ~= "" then
-    local m = entry.members and entry.members[1]
     local hay = {}
-    if m then
-      hay[#hay + 1] = m.name or ""
-      hay[#hay + 1] = m.specName or ""
-      hay[#hay + 1] = m.class or ""
-      hay[#hay + 1] = m.localizedClass or ""
-      if NS.ResolveRole and NS.RoleTag then
-        local _, rolePlain = NS.RoleTag(NS.ResolveRole(m))
-        hay[#hay + 1] = rolePlain or ""
-        hay[#hay + 1] = NS.ResolveRole(m) or ""
+    if entry.members then
+      for _, m in ipairs(entry.members) do
+        hay[#hay + 1] = m.name or ""
+        hay[#hay + 1] = m.specName or ""
+        hay[#hay + 1] = m.class or ""
+        hay[#hay + 1] = m.localizedClass or ""
+        if NS.ResolveRole and NS.RoleTag then
+          local _, rolePlain = NS.RoleTag(NS.ResolveRole(m))
+          hay[#hay + 1] = rolePlain or ""
+          hay[#hay + 1] = NS.ResolveRole(m) or ""
+        end
       end
     end
     hay[#hay + 1] = entry.comment or ""
@@ -263,7 +266,7 @@ end
 -- Build the display-order view (view[1] = top row).
 local function BuildView()
   wipe(view)
-  local log = (NS.db and NS.db.log) or {}
+  local log = NS.Data().log or {}
   if sortKey == "time" then
     if sortDir == "desc" then
       for i = #log, 1, -1 do
@@ -292,10 +295,75 @@ local function BuildView()
 end
 
 -- ---------------------------------------------------------------------------
+-- Group by key: collapse the chronological view into "+10 Altar of Fangs (3)"
+-- bands, newest group activity first. Follows whatever sort is active.
+-- ---------------------------------------------------------------------------
+
+local function GroupKeyFor(e)
+  return tostring(e.key or 0) .. "|" .. (e.dungeonFull or e.dungeon or "?")
+end
+
+local function GroupLabel(first, count)
+  if (not first.key) and (not first.dungeon and not first.dungeonFull) then
+    return "|cffffd100No key info (" .. count .. ")|r"
+  end
+  local run = (first.key and ("+" .. first.key .. " ") or "") .. (first.dungeonFull or first.dungeon or "?")
+  return "|cffffd100" .. run .. " (" .. count .. ")|r"
+end
+
+local function GroupViewByKey()
+  -- Bucket in view order (== current sort), then emit band + members.
+  -- Separators are dropped here: bands span sessions, stats cover the rest.
+  local grouped, order = {}, {}
+  for _, e in ipairs(view) do
+    if not e.separator then
+      local gk = GroupKeyFor(e)
+      local g = grouped[gk]
+      if not g then
+        g = { first = e, items = {} }
+        grouped[gk] = g
+        order[#order + 1] = gk
+      end
+      g.items[#g.items + 1] = e
+    end
+  end
+  if #order == 0 then return end -- separators-only view stays untouched
+  wipe(view)
+  for _, gk in ipairs(order) do
+    local g = grouped[gk]
+    view[#view + 1] = { groupHeader = true, headerText = GroupLabel(g.first, #g.items) }
+    for _, e in ipairs(g.items) do view[#view + 1] = e end
+  end
+end
+
+-- Multi-member parties: every queued member after the first gets an indented
+-- child row (display-only, like the group browser lists the whole party).
+-- Runs after grouping so children travel with their parent band.
+local function ExpandGroups()
+  local out, changed = {}, false
+  for _, e in ipairs(view) do
+    out[#out + 1] = e
+    if not (e.groupHeader or e.separator or e.groupChild)
+      and e.members and #e.members > 1 then
+      for mi = 2, math.min(#e.members, 8) do
+        local m = e.members[mi]
+        if m and m.name then
+          out[#out + 1] = { groupChild = true, parent = e, memberIndex = mi }
+          changed = true
+        end
+      end
+    end
+  end
+  if changed then
+    wipe(view)
+    for _, e in ipairs(out) do view[#view + 1] = e end
+  end
+end
+
+-- ---------------------------------------------------------------------------
 -- Session guard: applicantIDs reset on relist, so ID-based LFG actions are
 -- only valid for entries logged during the CURRENT listing session.
 -- ---------------------------------------------------------------------------
-
 local function RowLFGActionsAllowed(entry)
   return entry ~= nil and not entry.separator
     and entry.applicantID and entry.applicantID ~= 0
@@ -718,6 +786,56 @@ local function RenderRow(row, entry, i)
   end
   row:Show()
   row.entry = entry
+  if entry.groupChild then
+    -- Party member row: same columns as the parent, indented, display-only.
+    local pe = entry.parent
+    local m = pe and pe.members and pe.members[entry.memberIndex] or nil
+    row:EnableMouse(false)
+    if pe then
+      local tr, tg, tb = StatusTint(pe.status)
+      row.stripe:SetColorTexture(tr, tg, tb, 0.12)
+    else
+      row.stripe:SetColorTexture(0.2, 0.2, 0.2, 0.1)
+    end
+    for _, c in ipairs(COLS) do row.cols[c.key]:SetText("") end
+    if m and m.name then
+      row.cols.name:SetText("  + " .. ClassColorize(m.class, Trunc(ShortName(m.name), 18)))
+      row.cols.role:SetText(NS.RoleTag(NS.ResolveRole(m)))
+      row.cols.spec:SetText(Trunc(m.specName or m.localizedClass or m.class or "-", 14))
+      row.cols.ilvl:SetText((m.itemLevel and m.itemLevel > 0) and tostring(math.floor(m.itemLevel)) or "-")
+      local sc = (m.rioScore and m.rioScore > 0) and m.rioScore or (m.dungeonScore or 0)
+      row.cols.score:SetText((sc and sc > 0) and tostring(math.floor(sc)) or "-")
+    end
+    if row.icon then row.icon:SetTexture(nil) end
+    row.selTex:Hide()
+    if row.accent then row.accent:Hide() end
+    if row.statusIcons then for _, ic in ipairs(row.statusIcons) do ic:Hide() end end
+    row.flashAnim:Stop()
+    row.flash:Hide()
+    row.act[1]:Hide()
+    row.act[2]:Hide()
+    row.act[3]:Hide()
+    return
+  end
+  if entry.groupHeader then
+    -- Key band: full-width gold label, no mouse, no actions, no icons.
+    row:EnableMouse(false)
+    row.stripe:SetColorTexture(0.55, 0.42, 0.12, 0.35)
+    for _, c in ipairs(COLS) do
+      row.cols[c.key]:SetText(c.key == "name" and (entry.headerText or "") or "")
+    end
+    if row.icon then row.icon:SetTexture(nil) end
+    row.selTex:Hide()
+    if row.accent then row.accent:Hide() end
+    if row.statusIcons then for _, ic in ipairs(row.statusIcons) do ic:Hide() end end
+    row.flashAnim:Stop()
+    row.flash:Hide()
+    row.act[1]:Hide()
+    row.act[2]:Hide()
+    row.act[3]:Hide()
+    return
+  end
+  row:EnableMouse(true)
   -- Status tint + soft zebra striping so long histories stay readable.
   local tr, tg, tb, ta = 0.2, 0.2, 0.2, 0.12
   if not entry.separator then
@@ -811,7 +929,7 @@ RenderRows = function()
   if n == 0 then
     local r = rows[1]
     if r then
-      local log = NS.db and NS.db.log or {}
+      local log = NS.Data().log or {}
       local hint = (#log == 0) and l("empty_none", "No applicants logged yet — new queues will appear here")
         or l("empty_filtered", "No match — set Filter: All and clear the search box")
       r:Show()
@@ -857,6 +975,7 @@ local function RefreshFilterButtons()
   if resetFiltersBtn then
     local active = NS.logFilter.status ~= "ALL" or (NS.logFilter.class or "ALL") ~= "ALL"
       or (NS.logFilter.minKey or 0) > 0 or (NS.logFilter.query ~= nil and NS.logFilter.query ~= "")
+      or sortKey ~= "time" or sortDir ~= "desc"
     resetFiltersBtn:SetShown(active)
   end
 end
@@ -958,8 +1077,12 @@ end
 RefreshNow = function()
   if not (logFrame and listArea) then return end
   BuildView()
+  if NS.db and NS.db.groupByKey then GroupViewByKey() end
+  ExpandGroups() -- party members gain child rows (display-only)
   local n = #view
-  local log = (NS.db and NS.db.log) or {}
+  local nEntries = 0
+  for _, e in ipairs(view) do if not (e.groupHeader or e.separator or e.groupChild) then nEntries = nEntries + 1 end end
+  local log = NS.Data().log or {}
   if countLabel then
     local total = #log
     local suffix = ""
@@ -975,7 +1098,7 @@ RefreshNow = function()
         NS.db.minIlvl > 0 and tostring(NS.db.minIlvl) or "-",
         NS.db.minScore > 0 and tostring(NS.db.minScore) or "-")
     end
-    countLabel:SetText(l("entries_fmt", "%d of %d entries"):format(n, total) .. suffix)
+    countLabel:SetText(l("entries_fmt", "%d of %d entries"):format(nEntries, total) .. suffix)
   end
   RefreshFilterButtons()
   RefreshHeaderWidgets()
@@ -1038,7 +1161,7 @@ function NS.ProbeLogUI()
     p.emptyCols = empty
     local _, _, _, _, ry = r1:GetPoint(1)
     p.row1Y = ry and math.floor(ry) or -999
-    local log = (NS.db and NS.db.log) or {}
+    local log = NS.Data().log or {}
     for i = #log, 1, -1 do
       local e = log[i]
       if e and not e.separator then
@@ -1304,43 +1427,41 @@ function NS.BuildLogUI()
   do
     local x = 4 + 2
     for _, c in ipairs(COLS) do
-      local widget
-      if c.sort then
-        local btn = CreateFrame("Button", nil, headerFrame)
-        btn:SetNormalFontObject("GameFontNormalSmall")
-        btn:SetHighlightFontObject("GameFontHighlightSmall")
-        btn:SetText(c.label)
-        local fs = btn:GetFontString()
-        if fs then
-          fs:SetJustifyH(c.justify)
-          fs:SetWordWrap(false)
-        end
-        btn.label = c.label
-        btn.colKey = c.key
-        btn:SetScript("OnClick", function() ToggleSort(c.key) end)
-        widget = btn
-      else
-        local fs = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        fs:SetJustifyH(c.justify)
-        fs:SetWordWrap(false)
-        fs:SetTextColor(1, 0.82, 0)
-        fs:SetText(c.label)
-        widget = fs
-      end
+      -- Always a real FontString (bare Button text does not paint reliably),
+      -- plus an invisible click-catcher on sortable columns.
+      local fs = headerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      fs:SetJustifyH(c.justify)
+      fs:SetWordWrap(false)
+      fs:SetTextColor(1, 0.82, 0)
+      fs:SetText(c.label)
+      fs.label = c.label
       if c.key == "note" then
-        widget:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
-        widget:SetPoint("RIGHT", headerFrame, "RIGHT", -2, 0)
+        fs:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
+        fs:SetPoint("RIGHT", headerFrame, "RIGHT", -2, 0)
       elseif c.key == "name" then
         -- Indent header text past the class-icon strip so it sits over names.
-        widget:SetPoint("LEFT", headerFrame, "LEFT", x + NAME_ICON_W, 0)
-        widget:SetWidth(c.width)
+        fs:SetPoint("LEFT", headerFrame, "LEFT", x + NAME_ICON_W, 0)
+        fs:SetWidth(c.width)
         x = x + c.width + NAME_ICON_W + ROW_GAP
       else
-        widget:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
-        widget:SetWidth(c.width)
+        fs:SetPoint("LEFT", headerFrame, "LEFT", x, 0)
+        fs:SetWidth(c.width)
         x = x + c.width + ROW_GAP
       end
-      headerWidgets[c.key] = widget
+      if c.sort then
+        local ck = c.key
+        local btn = CreateFrame("Button", nil, headerFrame)
+        btn:SetPoint("TOPLEFT", fs, "TOPLEFT", -3, 3)
+        btn:SetPoint("BOTTOMRIGHT", fs, "BOTTOMRIGHT", 3, -3)
+        btn:SetScript("OnClick", function() ToggleSort(ck) end)
+        btn:SetScript("OnEnter", function(self)
+          GameTooltip:SetOwner(self, "ANCHOR_TOP")
+          GameTooltip:SetText("Sort by " .. (fs.label or ck), 1, 1, 1)
+          GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      end
+      headerWidgets[c.key] = fs
     end
   end
 

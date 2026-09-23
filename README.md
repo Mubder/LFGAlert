@@ -5,8 +5,11 @@ WoW Retail addon (Midnight / 12.x): **sound alert + applicant log** for your Pre
 Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new application), plus what it was missing:
 
 - 🔊 Sound + center raid-warning + red chat message when someone signs up (leader only)
+- 🔇 **Mute board** (Settings → Mute, or `/lfgalert mute`) — master mute plus per-part switches for sound, chat, screen, popup, flash, session summary and minimap. Muted items stay fully logged
+- 🎯 **Alerts per role** — mute Tank / Healer / DPS independently for sound, chat, and screen alerts (Settings → Alerts by role). Unknown roles always alert; log, stats and auto-decline are unaffected
 - 🪟 **Auto-opens Blizzard's Group Finder on your applicant list** on new queue (toggle: `/lfgalert window off`, manual: `/lfgalert open`; deferred until combat ends if you're fighting)
 - 📝 Log of **who queued / was invited / accepted / declined / cancelled / timed out** — one row per applicant: the Status column shows a lifecycle icon strip (🔔 queued → ⏳ invited → ✅ accepted, ✕ declined/left). Stages that happened are colored, the rest greyed out; hover for the full transition timeline.
+- 🗂️ Log scope + grouping — shared account-wide by default, or per character (Settings → Data & Stats, both histories kept); rows group under their key (`+10 Altar of Fangs (3)`, toggle with `/lfgalert groupbykey`)
 - 🪟 **Scrollable, sortable log window** — smooth mouse-wheel scrolling through the whole history (no paging), click any column header (Time / Applicant / Key / iLvl / M+ Score / Status) to sort, resizable from the bottom-right corner, remembers position / size / scale between sessions (`/lfgalert resetui` to reset)
 - 🧙 Group-Finder-styled table: **Time | Applicant | Class/Spec | Role | Key | iLvl | M+ Score | Status | Notes** — gold headers on a dark band, gold-framed list area, class icons + class-colored names, zebra striping + rows tinted by status (green accepted, red declined, gold queued), fresh queues flash briefly, full detail in tooltip
 - 🗝️ **Dungeon + key level per row** (e.g. `+5 AOF`) — captured from your live listing, stored per entry so it survives delists; also appended to chat lines (`[+5 AOF]`)
@@ -48,6 +51,8 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
 - `/lfgalert filter <all|queued|invited|accepted|declined|gone>` — filter log
 - `/lfgalert window [on|off]` — auto-open Group Finder applicants on queue
 - `/lfgalert open` — open Group Finder applicants now
+- `/lfgalert mute [on|off]` — master mute for sound/chat/screen/popup (log keeps recording)
+- `/lfgalert groupbykey [on|off]` — group log rows under their key
 - `/lfgalert resetui` — reset log window position / size / scale
 - `/lfgalert on|off` — enable/disable
 
