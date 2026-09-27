@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 28 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 29 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -751,8 +751,8 @@ local lastSoundKey, lastSoundAt = nil, 0
 
 function NS.PlayAlertSound(tag)
   if not NS.db or not NS.db.soundEnabled then return end
-  -- Debounce: the same trigger arriving twice within 3s (double events)
-  -- plays once. Distinct applicants carry distinct tags and always play.
+  -- Debounce: the same applicant pinging twice within 3s (double events,
+  -- instant cancel+requeue spam) plays once. Distinct IDs always play.
   if tag then
     local now = GetTime()
     if tag == lastSoundKey and (now - lastSoundAt) < 3 then return end
@@ -821,7 +821,7 @@ function NS.AlertNewApplicant(applicantID, snap)
       tostring(RoleAlertAllowed("sound", pm)), tostring(RoleAlertAllowed("chat", pm)),
       tostring(RoleAlertAllowed("screen", pm)), tostring(RoleAlertAllowed("popup", pm))))
   end
-  if RoleAlertAllowed("sound", pm) then NS.PlayAlertSound("new:" .. tostring(applicantID)) end
+  if RoleAlertAllowed("sound", pm) then NS.PlayAlertSound(tostring(applicantID)) end
   if NS.db and NS.db.flashTaskbar and FlashClientIcon then
     pcall(FlashClientIcon)
   end
@@ -1019,7 +1019,7 @@ local function HandleApplicantSnapshot(applicantID, snap, reason)
     -- first sighting; tagged so a double event still plays once).
     if snap.status == "applied" and reason == "list"
       and RoleAlertAllowed("sound", PrimaryMember(snap)) then
-      NS.PlayAlertSound("requeue:" .. tostring(applicantID))
+      NS.PlayAlertSound(tostring(applicantID))
     end
   else
     -- Same status: refresh snapshot (ilvl/score may have resolved late)
