@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 32 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 33 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -816,6 +816,90 @@ local function CenterMessage(text)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Stacked center toasts. Blizzard's RaidWarningFrame holds only TWO messages
+-- and silently drops/overwrites extras, so simultaneous applicants randomly
+-- lost their on-screen alert (first/last/none). This own stack shows every
+-- line: each toast holds ~4s, fades ~0.8s, up to 5 visible (oldest recycles).
+-- ---------------------------------------------------------------------------
+local toastFrame
+local toastShown, toastPool = {}, {}
+local TOAST_MAX, TOAST_HOLD, TOAST_FADE = 5, 4.0, 0.8
+
+local function LayoutToasts()
+  for i, ln in ipairs(toastShown) do
+    ln:ClearAllPoints()
+    if i == 1 then
+      ln:SetPoint("TOP", toastFrame, "TOP", 0, 0)
+    else
+      ln:SetPoint("TOP", toastShown[i - 1], "BOTTOM", 0, -6)
+    end
+  end
+end
+
+local function UpdateToasts(_, elapsed)
+  local removed = false
+  for i = #toastShown, 1, -1 do
+    local ln = toastShown[i]
+    if ln.hold then
+      ln.hold = ln.hold - elapsed
+      if ln.hold <= 0 then
+        ln.hold = nil
+        ln.fade = TOAST_FADE
+      end
+    elseif ln.fade then
+      ln.fade = ln.fade - elapsed
+      if ln.fade <= 0 then
+        ln:Hide()
+        toastPool[#toastPool + 1] = ln
+        table.remove(toastShown, i)
+        removed = true
+      else
+        ln:SetAlpha(ln.fade / TOAST_FADE)
+      end
+    end
+  end
+  if removed then LayoutToasts() end
+end
+
+local function EnsureToastFrame()
+  if toastFrame then return toastFrame end
+  local ok, f = pcall(CreateFrame, "Frame", "LFGAlertToastFrame", UIParent)
+  if not (ok and f) then return nil end
+  toastFrame = f
+  toastFrame:SetSize(640, 150)
+  toastFrame:SetPoint("TOP", UIParent, "TOP", 0, -135)
+  toastFrame:SetFrameStrata("HIGH")
+  toastFrame:SetScript("OnUpdate", UpdateToasts)
+  toastFrame:Show()
+  return toastFrame
+end
+
+-- Applicant alerts come through here (NOT Blizzard's raid warning): same
+-- on/off toggle, but every simultaneous applicant gets a visible line.
+local function ApplicantToast(text)
+  if not (NS.db and NS.db.raidWarning) then return end
+  if not EnsureToastFrame() then
+    CenterMessage(text) -- fallback: Blizzard's frame is better than nothing
+    return
+  end
+  local line = table.remove(toastPool)
+  if not line then
+    line = toastFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  end
+  line:SetText(text)
+  line:SetAlpha(1)
+  line.hold, line.fade = TOAST_HOLD, nil
+  line:Show()
+  toastShown[#toastShown + 1] = line
+  if #toastShown > TOAST_MAX then
+    local old = table.remove(toastShown, 1)
+    old:Hide()
+    toastPool[#toastPool + 1] = old
+  end
+  LayoutToasts()
+end
+
 local function ChatMessage(text)
   if not NS.db or not NS.db.chatMessage then return end
   print("|cffff2020[LFGAlert]|r " .. text)
@@ -832,7 +916,7 @@ local function CenterRichAlert(applicantID, snap)
   local roleTag = NS.RoleTag(NS.ResolveRole(pm))
   local specTxt = pm.specName or pm.localizedClass or pm.class or ""
   if pm.class then specTxt = ClassColorize(pm.class, specTxt) end
-  CenterMessage(l("alert_center_fmt", "New applicant: %s - %s %s"):format(ShortName(pm.name), roleTag, specTxt))
+  ApplicantToast(l("alert_center_fmt", "New applicant: %s - %s %s"):format(ShortName(pm.name), roleTag, specTxt))
 end
 
 function NS.AlertNewApplicant(applicantID, snap)
@@ -855,7 +939,7 @@ function NS.AlertNewApplicant(applicantID, snap)
     -- Details not ready yet: keep the sound + a generic banner now;
     -- BackfillLogEntry prints the compact line once data lands.
     if RoleAlertAllowed("screen", pm) then
-      CenterMessage(l("alert_banner", "New applicant!"))
+      ApplicantToast(l("alert_banner", "New applicant!"))
     end
     return
   end
@@ -1365,7 +1449,7 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("|cffff2020[LFGAlert]|r Log cleared.")
   elseif cmd == "test" then
     NS.PlayAlertSound()
-    CenterMessage("LFGAlert test: sound + warning OK")
+    ApplicantToast("LFGAlert test: sound + warning OK")
     ChatMessage("Test alert OK. List a group and have someone apply to see real entries. (Fake log row added.)")
     -- Add a fake row so users can try right-click whisper/invite UI instantly.
     NS.AddLogEntry(0, nil, "applied", {

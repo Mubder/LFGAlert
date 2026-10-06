@@ -20,6 +20,7 @@ globals = {
   "LFGAlertKeyMenu",
   "LFGAlertFilterMenu",
   "LFGAlertMinimapButton",
+  "LFGAlertToastFrame",
 }
 
 -- WoW API + FrameXML we read. Not exhaustive: extend as new APIs are used.
