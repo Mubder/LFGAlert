@@ -1304,7 +1304,7 @@ function NS.BuildLogUI()
   local bell = logFrame:CreateTexture(nil, "OVERLAY")
   bell:SetSize(26, 26)
   bell:SetPoint("TOPLEFT", logFrame, "TOPLEFT", 16, -10)
-  bell:SetTexture("Interface\\AddOns\\LFGAlert\\Textures\\icon")
+  bell:SetTexture("Interface\\AddOns\\LFGAlert\\Textures\\icon.png")
   bell:SetTexCoord(0.05, 0.95, 0.05, 0.95)
 
   -- Build number in the title: instant proof of which code is rendering.

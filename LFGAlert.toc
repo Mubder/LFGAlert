@@ -4,7 +4,7 @@
 ## Author: LFGAlert
 ## Version: 1.1.1
 ## SavedVariables: LFGAlertDB
-## IconTexture: Interface\AddOns\LFGAlert\Textures\icon
+## IconTexture: Interface\AddOns\LFGAlert\Textures\icon.png
 
 Locales\enUS.lua
 Core.lua
