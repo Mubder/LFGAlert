@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 35 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 36 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -1133,6 +1133,44 @@ local function IsApplicantPresent(applicantID)
   return false
 end
 
+-- Session continuity across reloads: the runtime counter restarts at 1 while
+-- persisted log rows keep the old number, which made the login scan treat
+-- every existing applicant as brand-new (re-alert storm + duplicate rows +
+-- ID actions refused). When a listing is (still) active, ADOPT the persisted
+-- session number of the entries after the last separator instead of blindly
+-- incrementing; a genuine new listing still increments.
+local function AdoptOrIncrementSession()
+  local log = (NS.Data() and NS.Data().log) or {}
+  local lastSep = 0
+  for i, e in ipairs(log) do
+    if e.separator then lastSep = i end
+  end
+  local maxS = 0
+  for i = lastSep + 1, #log do
+    local e = log[i]
+    if e and not e.separator and type(e.session) == "number" and e.session > maxS then
+      maxS = e.session
+    end
+  end
+  if maxS > 0 then
+    listingSession = maxS
+  else
+    listingSession = listingSession + 1
+  end
+end
+
+-- Pre-seed known[] from the log so applicants that queued BEFORE a reload are
+-- never re-alerted as new (no sound, no toast, no popup on login).
+local function PrimeKnownFromLog()
+  for _, e in ipairs((NS.Data() and NS.Data().log) or {}) do
+    if not e.separator and e.applicantID and e.applicantID ~= 0
+      and e.session == listingSession and not TERMINAL_STATUSES[e.status]
+      and known[e.applicantID] == nil then
+      known[e.applicantID] = { status = e.status, snap = nil }
+    end
+  end
+end
+
 -- The applicant is gone from Blizzard's list (or their info call fails):
 -- they cancelled, joined, or expired. Synthesize the terminal transition so
 -- the log always shows an ending — but ONLY from non-terminal states, so a
@@ -1222,6 +1260,15 @@ local function ScanApplicants(reason, retryN)
   -- Only the leader's client should scream. (Listing exists => we listed it.)
   if not IsGroupLeader() then return end
   if not C_LFGList.GetApplicants then return end
+
+  -- A listing can be active before its event reaches us (login timing):
+  -- settle the session first, then prime known[] so the login scan does not
+  -- re-alert everyone who queued before the reload.
+  if not hadListing then
+    AdoptOrIncrementSession()
+    hadListing = true
+  end
+  if reason == "login" then PrimeKnownFromLog() end
 
   local ok, ids = pcall(C_LFGList.GetApplicants)
   if not ok or type(ids) ~= "table" then
@@ -1454,7 +1501,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
   elseif event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
     if HasActiveListing() then
-      if not hadListing then listingSession = listingSession + 1 end
+      if not hadListing then
+        AdoptOrIncrementSession()
+      end
       hadListing = true
       NS.Rescan("entry")
     else
