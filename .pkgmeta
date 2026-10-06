@@ -1,5 +1,5 @@
 # LFGAlert packager config (CurseForge / Wago via BigWigs packager)
-# Tag a release (git tag v1.0.15) and the packager zips the addon as "LFGAlert".
+# Tag a release (git tag v1.1.1) and the packager zips the addon as "LFGAlert".
 package-as: LFGAlert
 
 # No external libraries to bundle.
@@ -11,3 +11,4 @@ ignore:
   - .env
   - .github
   - CURSEFORGE.md
+  - output

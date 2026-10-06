@@ -39,7 +39,8 @@ function NS.BuildMinimapButton()
   local bg = mmButton:CreateTexture(nil, "BACKGROUND")
   bg:SetSize(20, 20)
   bg:SetPoint("CENTER", 0, 1)
-  bg:SetTexture("Interface\\Icons\\INV_Misc_Bell_01")
+  bg:SetTexture("Interface\\AddOns\\LFGAlert\\Textures\\icon")
+  bg:SetTexCoord(0.06, 0.94, 0.06, 0.94) -- keep the full-bleed art under the ring
 
   local function UpdatePos()
     local mx, my = MinimapPos(NS.db and NS.db.minimapAngle or 220)
