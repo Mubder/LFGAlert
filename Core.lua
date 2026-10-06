@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 31 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 32 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -926,6 +926,42 @@ local function BackfillLogEntry(applicantID, snap)
 end
 NS.BackfillLogEntry = BackfillLogEntry
 
+-- Delayed alert continuation (called from HandleApplicantSnapshot above via
+-- the local declared here; assignment must precede the handler's call site,
+-- which is further down the file).
+local DelayedApplicantAlert
+DelayedApplicantAlert = function(applicantID, attempt)
+  C_Timer.After(0.6, function()
+    if not HasActiveListing() then return end
+    -- They may have left again before we ever alerted.
+    local ok, info = pcall(C_LFGList.GetApplicantInfo, applicantID)
+    if ok and type(info) == "table" and info.applicationStatus ~= "applied" then return end
+    local snap = SnapshotApplicant(applicantID)
+    local prev = known[applicantID]
+    if snap and prev then prev.snap = snap end
+    if snap and SnapHasData(snap) then
+      -- Data landed: side effects here, then the backfill fills the "?" row,
+      -- prints the chat line and fires the rich toast (gated per role).
+      local pm = snap.members[1]
+      if not (NS.db and NS.db.muteAll) and RoleAlertAllowed("sound", pm) then
+        NS.PlayAlertSound(tostring(applicantID))
+      end
+      if NS.db and NS.db.autoOpenLFG and not (NS.db and NS.db.muteAll)
+        and RoleAlertAllowed("popup", pm) then
+        NS.OpenApplicants()
+      end
+      BackfillLogEntry(applicantID, snap)
+    elseif attempt >= 4 then
+      -- Still nothing: alert with what we know (generic banner); the normal
+      -- scan/backfill retries will promote it to the rich toast later.
+      local best = (snap and SnapHasData(snap) and snap) or (prev and prev.snap)
+      if best then NS.AlertNewApplicant(applicantID, best) end
+    else
+      DelayedApplicantAlert(applicantID, attempt + 1)
+    end
+  end)
+end
+
 -- ---------------------------------------------------------------------------
 -- Auto-decline: when enabled, applicants below minIlvl/minScore are declined
 -- automatically once their data is known. NEVER fires without real data.
@@ -1023,6 +1059,10 @@ end
 -- both the full-list scan and the per-applicant event path call this, so
 -- new-applicant alerts, status-change logging and data backfill behave
 -- identically everywhere.
+-- Member data often lags the applicant event by a second or two, which made
+-- the toast style inconsistent (whoever's data was late got the generic
+-- banner). Wait briefly (bounded ~2.4s) so the alert can be the rich one;
+-- if data never comes, fall back to the generic banner + backfill promotion.
 local function HandleApplicantSnapshot(applicantID, snap, reason)
   if not snap then return end
   local prev = known[applicantID]
@@ -1030,7 +1070,11 @@ local function HandleApplicantSnapshot(applicantID, snap, reason)
     known[applicantID] = { status = snap.status, snap = snap }
     NS.AddLogEntry(applicantID, nil, snap.status or "applied", snap, true)
     if snap.status == "applied" then
-      NS.AlertNewApplicant(applicantID, snap)
+      if SnapHasData(snap) then
+        NS.AlertNewApplicant(applicantID, snap)
+      else
+        DelayedApplicantAlert(applicantID, 1)
+      end
       NS.MaybeAutoDecline(applicantID, snap)
     else
       NS.AnnounceStatusChange(applicantID, nil, snap.status, snap)
