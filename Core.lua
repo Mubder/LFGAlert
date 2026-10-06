@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 30 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 31 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -435,12 +435,21 @@ end
 
 -- Blizzard's INLINE_*_ICON globals changed shape across patches (classic
 -- texture tags vs atlas markup), and broken markup renders as "???" in chat.
--- Only trust classic texture tags; otherwise fall back to the colored label.
-local function SafeRoleIcon(iconKey)
+-- Trust the global when it is one of the two known-good chat-safe forms
+-- (classic |T...|t or modern atlas |A:...|a); otherwise fall back to the
+-- classic role-icon texture coordinates (stable since MoP).
+local ROLE_ICON_FALLBACK = {
+  TANK    = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:16:16:0:0:64:64:0:19:22:41|t",
+  HEALER  = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:16:16:0:0:64:64:20:39:1:20|t",
+  DAMAGER = "|TInterface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES:16:16:0:0:64:64:20:39:22:41|t",
+}
+
+local function SafeRoleIcon(iconKey, roleKey)
   local s = iconKey and _G[iconKey]
-  if type(s) ~= "string" or s == "" then return "" end
-  if not s:match("^|TInterface\\.+|t$") then return "" end
-  return s
+  if type(s) == "string" and s ~= "" then
+    if s:match("^|TInterface\\.+|t$") or s:match("^|A:.+|a$") then return s end
+  end
+  return ROLE_ICON_FALLBACK[roleKey] or ""
 end
 
 -- Returns coloredTag, plainLabel. Role icons resolve lazily via _G so this
@@ -455,7 +464,7 @@ function NS.RoleTag(role)
   elseif key == "DAMAGER" then
     label, color, iconKey = l("role_dps", "DPS"), "ff6b6b", "INLINE_DAMAGER_ICON"
   end
-  local icon = SafeRoleIcon(iconKey)
+  local icon = SafeRoleIcon(iconKey, key)
   if icon ~= "" then icon = icon .. " " end
   return icon .. "|cff" .. color .. label .. "|r", label
 end
@@ -812,6 +821,20 @@ local function ChatMessage(text)
   print("|cffff2020[LFGAlert]|r " .. text)
 end
 
+-- Rich center toast: name + role (icon + colored Tank/Heal/DPS) + class-colored
+-- spec. Used by the instant alert AND by the backfill path once member data
+-- lands (upgrading the generic "New applicant!" banner).
+local function CenterRichAlert(applicantID, snap)
+  local pm = snap and snap.members and snap.members[1]
+  if not (pm and pm.name) then return end
+  if NS.db and NS.db.muteAll then return end
+  if not RoleAlertAllowed("screen", pm) then return end
+  local roleTag = NS.RoleTag(NS.ResolveRole(pm))
+  local specTxt = pm.specName or pm.localizedClass or pm.class or ""
+  if pm.class then specTxt = ClassColorize(pm.class, specTxt) end
+  CenterMessage(l("alert_center_fmt", "New applicant: %s - %s %s"):format(ShortName(pm.name), roleTag, specTxt))
+end
+
 function NS.AlertNewApplicant(applicantID, snap)
   if NS.db and NS.db.muteAll then return end -- master mute: log still records
   local pm = PrimaryMember(snap)
@@ -837,14 +860,8 @@ function NS.AlertNewApplicant(applicantID, snap)
     return
   end
   local name = pm and pm.name or ("#" .. tostring(applicantID))
-  -- Center alert: name + role (icon + colored Tank/Heal/DPS) + class-colored spec.
-  local roleTag = NS.RoleTag(NS.ResolveRole(pm))
-  local specTxt = (pm and (pm.specName or pm.localizedClass or pm.class)) or ""
-  if pm and pm.class then
-    specTxt = ClassColorize(pm.class, specTxt)
-  end
   if RoleAlertAllowed("screen", pm) then
-    CenterMessage(l("alert_center_fmt", "New applicant: %s - %s %s"):format(ShortName(name), roleTag, specTxt))
+    CenterRichAlert(applicantID, snap)
   end
   if RoleAlertAllowed("chat", pm) then
     local qLabel, qColor = NS.StatusLabel("applied")
@@ -893,6 +910,9 @@ local function BackfillLogEntry(applicantID, snap)
             local bLabel, bColor = NS.StatusLabel("applied")
             ChatMessage(ShortName(bName) .. ": |cff" .. bColor .. bLabel .. "|r - " .. MemberSummary(bSnap))
           end
+          -- Promote the generic "New applicant!" banner to the rich toast
+          -- now that the member data (role/spec) is finally known.
+          CenterRichAlert(applicantID, bSnap)
         end
         -- MaybeAutoDecline re-verifies the applicant is still pending, so it
         -- is safe to attempt on every backfill.
