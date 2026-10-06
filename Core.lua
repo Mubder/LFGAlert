@@ -13,7 +13,15 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 33 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 34 -- bump every shipment; shown in load message + /lfgalert debug
+
+-- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
+-- so alert dropouts can be diagnosed from one chat dump.
+local function Trace(msg)
+  if NS.db and NS.db.traceAlerts then
+    print("|cff888888[LFGAlert] trace|r " .. msg)
+  end
+end
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -877,12 +885,10 @@ end
 
 -- Applicant alerts come through here (NOT Blizzard's raid warning): same
 -- on/off toggle, but every simultaneous applicant gets a visible line.
-local function ApplicantToast(text)
-  if not (NS.db and NS.db.raidWarning) then return end
-  if not EnsureToastFrame() then
-    CenterMessage(text) -- fallback: Blizzard's frame is better than nothing
-    return
-  end
+-- Hardened: any error inside the stack falls back to the Blizzard frame so
+-- an alert can never be silently eaten by the toast system.
+local function ApplicantToastShow(text)
+  if not EnsureToastFrame() then return false end
   local line = table.remove(toastPool)
   if not line then
     line = toastFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -898,6 +904,15 @@ local function ApplicantToast(text)
     toastPool[#toastPool + 1] = old
   end
   LayoutToasts()
+  return true
+end
+
+local function ApplicantToast(text)
+  if not (NS.db and NS.db.raidWarning) then return end
+  local ok, shown = pcall(ApplicantToastShow, text)
+  if not ok or shown == false then
+    CenterMessage(text)
+  end
 end
 
 local function ChatMessage(text)
@@ -1017,15 +1032,25 @@ local DelayedApplicantAlert
 DelayedApplicantAlert = function(applicantID, attempt)
   C_Timer.After(0.6, function()
     if not HasActiveListing() then return end
-    -- They may have left again before we ever alerted.
+    local kp = known[applicantID]
+    if kp then kp.alertPending = nil end
+    -- Abort only on a POSITIVE non-applied status. Fresh applicants often
+    -- return an info object with a NIL status ("not reported yet") - that is
+    -- "unknown", NOT "left", and must never drop the alert (this exact
+    -- assumption silently ate follow-up applicants' alerts in build 32-33).
     local ok, info = pcall(C_LFGList.GetApplicantInfo, applicantID)
-    if ok and type(info) == "table" and info.applicationStatus ~= "applied" then return end
+    if ok and type(info) == "table" and info.applicationStatus ~= nil
+      and info.applicationStatus ~= "applied" then
+      Trace(string.format("#%s delayed: left queue (%s), abort", tostring(applicantID), tostring(info.applicationStatus)))
+      return
+    end
     local snap = SnapshotApplicant(applicantID)
     local prev = known[applicantID]
     if snap and prev then prev.snap = snap end
     if snap and SnapHasData(snap) then
       -- Data landed: side effects here, then the backfill fills the "?" row,
       -- prints the chat line and fires the rich toast (gated per role).
+      Trace(string.format("#%s delayed: data landed on attempt %d", tostring(applicantID), attempt))
       local pm = snap.members[1]
       if not (NS.db and NS.db.muteAll) and RoleAlertAllowed("sound", pm) then
         NS.PlayAlertSound(tostring(applicantID))
@@ -1038,9 +1063,11 @@ DelayedApplicantAlert = function(applicantID, attempt)
     elseif attempt >= 4 then
       -- Still nothing: alert with what we know (generic banner); the normal
       -- scan/backfill retries will promote it to the rich toast later.
+      Trace(string.format("#%s delayed: no data after %d attempts, generic alert", tostring(applicantID), attempt))
       local best = (snap and SnapHasData(snap) and snap) or (prev and prev.snap)
       if best then NS.AlertNewApplicant(applicantID, best) end
     else
+      Trace(string.format("#%s delayed: attempt %d, still no data", tostring(applicantID), attempt))
       DelayedApplicantAlert(applicantID, attempt + 1)
     end
   end)
@@ -1150,17 +1177,24 @@ end
 local function HandleApplicantSnapshot(applicantID, snap, reason)
   if not snap then return end
   local prev = known[applicantID]
-  if not prev then
+  -- prev.status == nil means "seen but status not reported yet": treat like a
+  -- first sighting so the eventual real "applied" status still alerts as NEW
+  -- (otherwise it registered as a status CHANGE, which never alerts).
+  if not prev or prev.status == nil then
     known[applicantID] = { status = snap.status, snap = snap }
-    NS.AddLogEntry(applicantID, nil, snap.status or "applied", snap, true)
+    NS.AddLogEntry(applicantID, prev and prev.status, snap.status or "applied", snap, not prev)
+    Trace(string.format("#%s new: status=%s data=%s", tostring(applicantID),
+      tostring(snap.status), tostring(SnapHasData(snap))))
     if snap.status == "applied" then
       if SnapHasData(snap) then
         NS.AlertNewApplicant(applicantID, snap)
-      else
+      elseif not known[applicantID].alertPending then
+        -- One delayed chain per applicant, even if several events race.
+        known[applicantID].alertPending = true
         DelayedApplicantAlert(applicantID, 1)
       end
       NS.MaybeAutoDecline(applicantID, snap)
-    else
+    elseif snap.status ~= nil then
       NS.AnnounceStatusChange(applicantID, nil, snap.status, snap)
     end
   elseif prev.status ~= snap.status then
@@ -1190,7 +1224,11 @@ local function ScanApplicants(reason, retryN)
   if not C_LFGList.GetApplicants then return end
 
   local ok, ids = pcall(C_LFGList.GetApplicants)
-  if not ok or type(ids) ~= "table" then return end
+  if not ok or type(ids) ~= "table" then
+    Trace(string.format("scan(%s): GetApplicants failed (ok=%s)", reason or "?", tostring(ok)))
+    return
+  end
+  Trace(string.format("scan(%s): %d applicant(s) listed", reason or "?", #ids))
 
   -- The listing is the same for every applicant in this scan: resolve it once
   -- (activity-info + keystone lookups) instead of once per applicant.
