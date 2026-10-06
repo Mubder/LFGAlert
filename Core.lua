@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 29 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 30 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -837,9 +837,14 @@ function NS.AlertNewApplicant(applicantID, snap)
     return
   end
   local name = pm and pm.name or ("#" .. tostring(applicantID))
-  local _, rolePlain = NS.RoleTag(NS.ResolveRole(pm))
+  -- Center alert: name + role (icon + colored Tank/Heal/DPS) + class-colored spec.
+  local roleTag = NS.RoleTag(NS.ResolveRole(pm))
+  local specTxt = (pm and (pm.specName or pm.localizedClass or pm.class)) or ""
+  if pm and pm.class then
+    specTxt = ClassColorize(pm.class, specTxt)
+  end
   if RoleAlertAllowed("screen", pm) then
-    CenterMessage(l("alert_center_fmt", "New applicant: %s (%s)"):format(ShortName(name), rolePlain))
+    CenterMessage(l("alert_center_fmt", "New applicant: %s - %s %s"):format(ShortName(name), roleTag, specTxt))
   end
   if RoleAlertAllowed("chat", pm) then
     local qLabel, qColor = NS.StatusLabel("applied")

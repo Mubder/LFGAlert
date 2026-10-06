@@ -107,7 +107,7 @@ L.queued_star    = "Queued *"
 -- Alerts / chat ---------------------------------------------------------------
 L.msg_loaded        = "LFGAlert loaded (build %s). /lfgalert for log & options."
 L.alert_banner      = "New applicant!"
-L.alert_center_fmt  = "New applicant: %s (%s)"
+L.alert_center_fmt  = "New applicant: %s - %s %s"
 L.alert_chat_fmt    = "New applicant: %s"
 L.note_fmt          = 'Note: "%s"'
 L.auto_declined_fmt = "Auto-declined %s (%s)"
