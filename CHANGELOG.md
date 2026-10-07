@@ -1,3 +1,9 @@
+# LFGAlert 1.2.0
+
+## New
+
+- **Sound by role** - Tank, Healer and DPS each play their own alert sound, so you hear who signed up without looking. Defaults: Tank = Raid Warning, Healer = Ready Check, DPS = Level Up. Change them in Settings (Sound by role) or with `/lfgalert rolesound tank|healer|dps <id>|off` (off = use the global sound). Combine with the per-role gates to fine-tune exactly what each role triggers.
+
 # LFGAlert 1.1.1
 
 Big alert upgrade plus a batch of reliability fixes for the applicant alerts.

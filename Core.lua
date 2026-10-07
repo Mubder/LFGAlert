@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 38 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 39 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -68,6 +68,10 @@ local DEFAULTS = {
     screen = { TANK = true, HEALER = true, DAMAGER = true },
     popup = { TANK = true, HEALER = true, DAMAGER = true },
   },
+  -- Per-role alert sounds (SoundKit IDs). nil/0 = use the global sound.
+  -- Distinct defaults so you can hear WHO signed up without looking:
+  -- tank = Raid Warning, healer = Ready Check, dps = Level Up.
+  roleSounds = { TANK = 8959, HEALER = 8960, DAMAGER = 12867 },
   stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } },
   log = {}, -- persisted entries
 }
@@ -766,7 +770,7 @@ end
 
 local lastSoundKey, lastSoundAt = nil, 0
 
-function NS.PlayAlertSound(tag)
+function NS.PlayAlertSound(tag, role)
   if not NS.db or not NS.db.soundEnabled then return end
   -- Debounce: the same applicant pinging twice within 3s (double events,
   -- instant cancel+requeue spam) plays once. Distinct IDs always play.
@@ -776,6 +780,18 @@ function NS.PlayAlertSound(tag)
     lastSoundKey, lastSoundAt = tag, now
   end
   local channel = NS.db.useMasterChannel and "Master" or nil
+  -- Per-role sound: a role-specific SoundKit ID overrides the custom file
+  -- and the global ID, so each role is instantly recognizable by ear.
+  if role then
+    local roleKey = (role .. ""):upper()
+    if roleKey == "DPS" then roleKey = "DAMAGER" end
+    local rid = NS.db.roleSounds and tonumber(NS.db.roleSounds[roleKey])
+    if rid and rid > 0 then
+      local ok = pcall(PlaySound, rid, channel)
+      if not ok then pcall(PlaySound, 8959, channel) end
+      return
+    end
+  end
   -- Custom sound file takes precedence when enabled and set.
   if NS.db.useCustomSound and NS.db.customSoundPath and NS.db.customSoundPath ~= "" then
     local ok, played = pcall(PlaySoundFile, NS.db.customSoundPath, channel)
@@ -943,7 +959,7 @@ function NS.AlertNewApplicant(applicantID, snap)
       tostring(RoleAlertAllowed("sound", pm)), tostring(RoleAlertAllowed("chat", pm)),
       tostring(RoleAlertAllowed("screen", pm)), tostring(RoleAlertAllowed("popup", pm))))
   end
-  if RoleAlertAllowed("sound", pm) then NS.PlayAlertSound(tostring(applicantID)) end
+  if RoleAlertAllowed("sound", pm) then NS.PlayAlertSound(tostring(applicantID), NS.ResolveRole(pm)) end
   if NS.db and NS.db.flashTaskbar and FlashClientIcon then
     pcall(FlashClientIcon)
   end
@@ -1041,7 +1057,8 @@ DelayedApplicantAlert = function(applicantID, attempt)
     local ok, info = pcall(C_LFGList.GetApplicantInfo, applicantID)
     if ok and type(info) == "table" and info.applicationStatus ~= nil
       and info.applicationStatus ~= "applied" then
-      Trace(string.format("#%s delayed: left queue (%s), abort", tostring(applicantID), tostring(info.applicationStatus)))
+      Trace(string.format("#%s delayed: left queue (%s), abort",
+        tostring(applicantID), tostring(info.applicationStatus)))
       return
     end
     local snap = SnapshotApplicant(applicantID)
@@ -1053,7 +1070,7 @@ DelayedApplicantAlert = function(applicantID, attempt)
       Trace(string.format("#%s delayed: data landed on attempt %d", tostring(applicantID), attempt))
       local pm = snap.members[1]
       if not (NS.db and NS.db.muteAll) and RoleAlertAllowed("sound", pm) then
-        NS.PlayAlertSound(tostring(applicantID))
+        NS.PlayAlertSound(tostring(applicantID), NS.ResolveRole(pm))
       end
       if NS.db and NS.db.autoOpenLFG and not (NS.db and NS.db.muteAll)
         and RoleAlertAllowed("popup", pm) then
@@ -1244,7 +1261,7 @@ local function HandleApplicantSnapshot(applicantID, snap, reason)
     -- first sighting; tagged so a double event still plays once).
     if snap.status == "applied" and reason == "list"
       and RoleAlertAllowed("sound", PrimaryMember(snap)) then
-      NS.PlayAlertSound(tostring(applicantID))
+      NS.PlayAlertSound(tostring(applicantID), NS.ResolveRole(PrimaryMember(snap)))
     end
   else
     -- Same status: refresh snapshot (ilvl/score may have resolved late)
@@ -1559,6 +1576,36 @@ SlashCmdList["LFGALERT"] = function(msg)
       NS.db.soundEnabled = not NS.db.soundEnabled
       print("|cffff2020[LFGAlert]|r Sound " .. (NS.db.soundEnabled and "ON" or "OFF"))
     end
+  elseif cmd == "rolesound" then
+    -- /lfgalert rolesound tank|healer|dps <id>|off  (off/0 = global sound)
+    local map = {
+      tank = "TANK", t = "TANK",
+      healer = "HEALER", heal = "HEALER", h = "HEALER",
+      dps = "DAMAGER", damager = "DAMAGER", d = "DAMAGER",
+    }
+    local which, val = rest:match("^(%S+)%s*(.-)$")
+    local key = which and map[which:lower()]
+    if not key then
+      print("|cffff2020[LFGAlert]|r Usage: /lfgalert rolesound tank|healer|dps <id>|off")
+      for _, rk in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+        local rs = NS.db.roleSounds and NS.db.roleSounds[rk]
+        print(string.format("  %s: %s", rk:lower(), rs and tostring(rs) or "global"))
+      end
+    elseif val == "" or val == "off" or val == "0" then
+      NS.db.roleSounds = NS.db.roleSounds or {}
+      NS.db.roleSounds[key] = nil
+      print("|cffff2020[LFGAlert]|r " .. key:lower() .. " sound: global")
+    else
+      local rid = tonumber(val)
+      if rid and rid > 0 then
+        NS.db.roleSounds = NS.db.roleSounds or {}
+        NS.db.roleSounds[key] = rid
+        print("|cffff2020[LFGAlert]|r " .. key:lower() .. " sound set to " .. rid .. " (playing...)")
+        NS.PlayAlertSound(nil, key)
+      else
+        print("|cffff2020[LFGAlert]|r Give a SoundKit ID or 'off'.")
+      end
+    end
   elseif cmd == "soundfile" then
     -- /lfgalert soundfile Interface\AddOns\LFGAlert\Sounds\alert.ogg
     -- /lfgalert soundfile off  (back to SoundKit ID)
@@ -1782,6 +1829,7 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("  /lfgalert clear - wipe log history")
     print("  /lfgalert test - test sound + add sample row")
     print("  /lfgalert sound [<id>] - toggle or set sound ID (default 8959)")
+    print("  /lfgalert rolesound tank|healer|dps <id>|off - per-role sound")
     print("  /lfgalert soundfile <path>|off - custom sound file (e.g. Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg)")
     print("  /lfgalert minilvl <n> - highlight min item level (0 = off)")
     print("  /lfgalert minscore <n> - highlight min M+ score (0 = off)")

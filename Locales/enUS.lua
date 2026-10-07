@@ -201,6 +201,11 @@ L.cb_groupbykey = 'Group rows by key ("+10 Altar of Fangs (3)")'
 -- Alerts by role
 L.sec_roles  = "Alerts by role"
 L.note_roles = "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. Log rows, stats and auto-decline are unaffected."
+
+-- Sound by role
+L.sec_role_sounds  = "Sound by role"
+L.note_role_sounds = "Each role can use its own SoundKit ID, so you hear who signed up "
+  .. "without looking. 0 = use the global sound above. Or in chat: /lfgalert rolesound."
 L.row_sound  = "Sound for:"
 L.row_chat   = "Chat for:"
 L.row_screen = "Screen alert for:"

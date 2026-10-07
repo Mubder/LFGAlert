@@ -407,6 +407,51 @@ function NS.BuildOptions()
   y = y - 30
   Note(l("note_custom_example", "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  (drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"), 34)
 
+  Section(l("sec_role_sounds", "Sound by role"))
+  Note(l("note_role_sounds", "Each role can use its own SoundKit ID, so you hear who signed up "
+    .. "without looking. 0 = use the global sound above. Or in chat: /lfgalert rolesound."), 34)
+  do
+    local rows = {
+      { key = "TANK", label = l("role_tank", "Tank"), color = "5b9bff" },
+      { key = "HEALER", label = l("role_healer", "Heal"), color = "4dff4d" },
+      { key = "DAMAGER", label = l("role_dps", "DPS"), color = "ff6b6b" },
+    }
+    for _, rr in ipairs(rows) do
+      local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      lbl:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y - 4)
+      lbl:SetText("|cff" .. rr.color .. rr.label .. "|r:")
+      local box = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+      box:SetSize(90, 24)
+      box:SetPoint("LEFT", lbl, "RIGHT", 10, 0)
+      box:SetAutoFocus(false)
+      box:SetNumeric(true)
+      box:SetScript("OnShow", function(self)
+        local rs = NS.db.roleSounds and NS.db.roleSounds[rr.key]
+        self:SetText(rs and tostring(rs) or "0")
+      end)
+      box:SetScript("OnEnterPressed", function(self)
+        local id = tonumber(self:GetText()) or 0
+        NS.db.roleSounds = NS.db.roleSounds or {}
+        if id > 0 then
+          NS.db.roleSounds[rr.key] = id
+        else
+          NS.db.roleSounds[rr.key] = nil
+        end
+        if id > 0 then NS.PlayAlertSound(nil, rr.key) end
+        self:ClearFocus()
+      end)
+      local tb = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+      tb:SetSize(100, 22)
+      tb:SetPoint("LEFT", box, "RIGHT", 8, 0)
+      tb:SetText(l("btn_test", "Test sound"))
+      tb:SetScript("OnClick", function()
+        local rs = NS.db.roleSounds and NS.db.roleSounds[rr.key]
+        if rs then NS.PlayAlertSound(nil, rr.key) else NS.PlayAlertSound() end
+      end)
+      y = y - 30
+    end
+  end
+
   Section(l("sec_roles", "Alerts by role"))
   Note(l("note_roles", "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. Log rows, stats and auto-decline are unaffected."), 34)
   do
