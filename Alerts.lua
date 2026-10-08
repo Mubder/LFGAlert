@@ -32,12 +32,75 @@ local lastSoundKey, lastSoundAt = nil, 0
 -- Curated sound presets for the role dropdowns (Options + /lfgalert).
 -- Data-only: send more { id, label } pairs and they appear everywhere.
 NS.SOUND_PRESETS = {
-  { 8959, "Raid Warning" },
-  { 8960, "Ready Check" },
-  { 12867, "Level Up" },
-  { 543326, "Troll Cheer 3" },
-  { 539228, "Troll Cheer 1" },
-  { 4738557, "Dracthyr Cheer" },
+  -- { id, label, category } - single source for the role dropdowns. The three
+  -- flagged (cat "featured") also headline the menu above the categories.
+  { 556000, "Murloc Aggro", "featured" },
+  { 547630, "Dragon Whelp Stand", "featured" },
+  { 6053336, "Arathi Female Aggro", "featured" },
+  { 8959, "Raid Warning", "featured" },
+  { 8960, "Ready Check", "featured" },
+  { 12867, "Level Up", "featured" },
+  -- Aggro voices
+  { 5985390, "Nerubian Female Aggro", "Aggro voices" },
+  { 550523, "Goblin Pre-Aggro", "Aggro voices" },
+  { 3586097, "Grunt Throg (VO)", "Aggro voices" },
+  -- Ducks
+  { 4618219, "Duck Quack Aggressive 1", "Ducks" },
+  { 4618221, "Duck Quack 2", "Ducks" },
+  { 4618223, "Duck Quack 3", "Ducks" },
+  { 4618225, "Duck Quack 4", "Ducks" },
+  { 4618227, "Duck Quack 5", "Ducks" },
+  { 4618229, "Duck Quack 6", "Ducks" },
+  { 4618231, "Duck Quack 7", "Ducks" },
+  { 4618233, "Duck Quack 8", "Ducks" },
+  { 4618235, "Duck Quack 9", "Ducks" },
+  { 4618237, "Duck Quack 10", "Ducks" },
+  { 4618239, "Duck Quack 11", "Ducks" },
+  { 4618293, "Duck Quack Wound 1", "Ducks" },
+  { 4618295, "Duck Quack Wound 2", "Ducks" },
+  { 4618297, "Duck Quack Wound 3", "Ducks" },
+  { 4618299, "Duck Quack Wound 4", "Ducks" },
+  { 4618301, "Duck Quack Wound 5", "Ducks" },
+  { 4618303, "Duck Quack Wound 6", "Ducks" },
+  { 4618418, "Duckling Quack", "Ducks" },
+  -- Goblins
+  { 6350903, "Goblin Sapper 1", "Goblins" },
+  { 6350905, "Goblin Sapper 2", "Goblins" },
+  { 6350907, "Goblin Sapper 3", "Goblins" },
+  { 549921, "Gilgoblin Attack 1", "Goblins" },
+  { 549922, "Gilgoblin Attack 2", "Goblins" },
+  { 6234967, "Oil Goblin Cast 1", "Goblins" },
+  { 6234969, "Oil Goblin Cast 2", "Goblins" },
+  { 6234971, "Oil Goblin Cast 3", "Goblins" },
+  { 6234973, "Oil Goblin Cast 4", "Goblins" },
+  { 6234975, "Oil Goblin Cast 5", "Goblins" },
+  { 6234977, "Oil Goblin Cast 6", "Goblins" },
+  { 6234979, "Oil Goblin Cast 7", "Goblins" },
+  { 6234981, "Oil Goblin Cast 8", "Goblins" },
+  { 6234983, "Oil Goblin Cast 9", "Goblins" },
+  { 6234985, "Oil Goblin Cast 10", "Goblins" },
+  { 6234987, "Oil Goblin Cast 11", "Goblins" },
+  { 6234989, "Oil Goblin Cast 12", "Goblins" },
+  { 6234991, "Oil Goblin Cast 13", "Goblins" },
+  { 6234993, "Oil Goblin Cast 14", "Goblins" },
+  { 6234995, "Oil Goblin Cast 15", "Goblins" },
+  -- Monsters
+  { 606671, "Saurok Crit", "Monsters" },
+  { 1250663, "Banshee Death", "Monsters" },
+  { 1036737, "Arakkoa Attack Crit", "Monsters" },
+  { 1266209, "Eagle Wound", "Monsters" },
+  { 1255468, "Imp Crit", "Monsters" },
+  { 640068, "Mantid Tank Crit", "Monsters" },
+  -- Weapons & FX
+  { 569265, "Cannon 1", "Weapons & FX" },
+  { 568561, "Cannon 2", "Weapons & FX" },
+  { 774378, "Gibs Explode", "Weapons & FX" },
+  -- Legacy cheers (kept labeled so existing saved picks resolve)
+  { 543326, "Troll Cheer 3", "Cheers" },
+  { 539228, "Troll Cheer 1", "Cheers" },
+  { 4738557, "Dracthyr Cheer", "Cheers" },
+  -- Misc
+  { 567412, "Unlabeled 567412", "Misc" },
 }
 
 -- Play a sound by ID, auto-detecting its semantics: classic SoundKit IDs are

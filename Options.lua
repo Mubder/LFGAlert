@@ -457,17 +457,8 @@ function NS.BuildOptions()
       dd:SetScript("OnClick", function(self)
         if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
         MenuUtil.CreateContextMenu(self, function(_, root)
-          root:CreateTitle(l("rs_pick", "Pick a sound (plays on select)"))
-          root:CreateRadio(l("rs_global", "Global sound"),
-            function() return (NS.db.roleSounds and NS.db.roleSounds[rr.key]) == nil end,
-            function()
-              NS.db.roleSounds = NS.db.roleSounds or {}
-              NS.db.roleSounds[rr.key] = nil
-              dd:SetText(CurrentLabel())
-            end)
-          for _, p in ipairs(NS.SOUND_PRESETS or {}) do
-            local id, name = p[1], p[2]
-            root:CreateRadio(name .. "  (" .. id .. ")",
+          local function AddPreset(menu, id, name)
+            menu:CreateRadio(name .. "  (" .. id .. ")",
               function() return NS.db.roleSounds and NS.db.roleSounds[rr.key] == id end,
               function()
                 NS.db.roleSounds = NS.db.roleSounds or {}
@@ -476,6 +467,44 @@ function NS.BuildOptions()
                 local ch = (NS.db.useMasterChannel ~= false) and "Master" or nil
                 NS.PlaySoundID(id, ch)
               end)
+          end
+          root:CreateTitle(l("rs_pick", "Pick a sound (plays on select)"))
+          root:CreateRadio(l("rs_global", "Global sound"),
+            function() return (NS.db.roleSounds and NS.db.roleSounds[rr.key]) == nil end,
+            function()
+              NS.db.roleSounds = NS.db.roleSounds or {}
+              NS.db.roleSounds[rr.key] = nil
+              dd:SetText(CurrentLabel())
+            end)
+          -- Featured picks first, then category submenus (falls back to a
+          -- flat list with section titles if submenus are unavailable).
+          local cats, featured = {}, {}
+          for _, p in ipairs(NS.SOUND_PRESETS or {}) do
+            if p[3] == "featured" then
+              featured[#featured + 1] = p
+            else
+              local cat = p[3] or "Misc"
+              cats[cat] = cats[cat] or {}
+              cats[cat][#cats[cat] + 1] = p
+            end
+          end
+          for _, p in ipairs(featured) do AddPreset(root, p[1], p[2]) end
+          local catOrder = { "Aggro voices", "Ducks", "Goblins", "Monsters", "Weapons & FX", "Cheers", "Misc" }
+          for _, cat in ipairs(catOrder) do
+            local items = cats[cat]
+            if items then
+              local target
+              if root.CreateSubMenu then
+                local ok, sub = pcall(root.CreateSubMenu, root, cat)
+                if ok and sub then target = sub end
+              end
+              if target then
+                for _, p in ipairs(items) do AddPreset(target, p[1], p[2]) end
+              else
+                root:CreateTitle(cat)
+                for _, p in ipairs(items) do AddPreset(root, p[1], p[2]) end
+              end
+            end
           end
         end)
       end)
@@ -515,32 +544,6 @@ function NS.BuildOptions()
       end)
       y = y - 30
     end
-  end
-
-  -- Click-to-preview gallery, built from the shared preset list (drops grow
-  -- automatically when NS.SOUND_PRESETS gains entries).
-  Note(l("note_gallery", "Preview - click to hear any preset:"), 20)
-  do
-    local bx, bw = 24, 160
-    local n = 0
-    for _, g in ipairs(NS.SOUND_PRESETS or {}) do
-      n = n + 1
-      local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-      b:SetSize(bw, 22)
-      b:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
-      b:SetText(g[2] .. " " .. g[1])
-      local id = g[1]
-      b:SetScript("OnClick", function()
-        local ch = (NS.db.useMasterChannel ~= false) and "Master" or nil
-        NS.PlaySoundID(id, ch)
-      end)
-      bx = bx + bw + 8
-      if (n % 3) == 0 then
-        bx = 24
-        y = y - 26
-      end
-    end
-    if (n % 3) ~= 0 then y = y - 26 end
   end
 
   Section(l("sec_roles", "Alerts by role"))
