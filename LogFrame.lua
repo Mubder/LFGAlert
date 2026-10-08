@@ -528,12 +528,12 @@ local function MakeRow(i)
     for si, texPath in ipairs(STATUS_ICON_FILES) do
       local ic = b:CreateTexture(nil, "OVERLAY")
       ic:SetSize(STATUS_ICON_SIZE, STATUS_ICON_SIZE)
-      ic:SetPoint("TOPLEFT", b, "TOPLEFT", statusX + (i - 1) * (STATUS_ICON_SIZE + STATUS_ICON_GAP), -4)
+      ic:SetPoint("TOPLEFT", b, "TOPLEFT", statusX + (si - 1) * (STATUS_ICON_SIZE + STATUS_ICON_GAP), -4)
       ic:SetTexture(texPath)
       ic:SetDesaturated(true)
       ic:SetAlpha(0.3)
       ic:Hide()
-      b.statusIcons[i] = ic
+      b.statusIcons[si] = ic
     end
   end
 
@@ -548,16 +548,16 @@ local function MakeRow(i)
   for ai, a in ipairs(actDefs) do
     local ab = CreateFrame("Button", nil, b)
     ab:SetSize(20, 20)
-    ab:SetPoint("RIGHT", b, "RIGHT", -2 - (3 - i) * 24, 0)
+    ab:SetPoint("RIGHT", b, "RIGHT", -2 - (3 - ai) * 24, 0)
     ab:SetNormalTexture(a.icon)
     ab:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     ab:SetScript("OnClick", function()
       local e = b.entry
       if not e or e.separator or not e.members or not e.members[1] then return end
       local fullName, applicantID = e.members[1].name, e.applicantID
-      if i == 1 then
+      if ai == 1 then
         NS.Whisper(fullName)
-      elseif i == 2 then
+      elseif ai == 2 then
         -- By-name invites are always safe; the ID path only for live IDs.
         if RowLFGActionsAllowed(e) then NS.InviteApplicantByID(applicantID) end
         NS.InviteByName(fullName)
@@ -576,7 +576,7 @@ local function MakeRow(i)
       GameTooltip:Show()
     end)
     ab:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    b.act[i] = ab
+    b.act[ai] = ab
   end
 
   b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
