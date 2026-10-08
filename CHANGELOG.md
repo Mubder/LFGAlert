@@ -2,7 +2,7 @@
 
 ## New
 
-- **Sound by role** - Tank, Healer and DPS each play their own alert sound, so you hear who signed up without looking. Defaults: Tank = troll male cheer, Healer = troll male cheer (second line), DPS = dracthyr cheer. Change them in Settings (Sound by role) or with `/lfgalert rolesound tank|healer|dps <id>|off` (off = use the global sound). Combine with the per-role gates to fine-tune exactly what each role triggers. Browse more IDs at wowhead.com/sounds and preview any of them with `/run PlaySound(<id>)`.
+- **Sound by role** - Tank, Healer and DPS each play their own alert sound, so you hear who signed up without looking. Defaults: Tank = troll male cheer, Healer = troll male cheer (second line), DPS = dracthyr cheer. Set your own IDs in Settings (Sound by role - typed IDs also save when you click away, and a click-to-preview gallery shows IDs on the buttons) or with `/lfgalert rolesound tank|healer|dps <id>|off` (off = use the global sound). Browse more IDs at wowhead.com/sounds and preview any of them with `/run PlaySound(<id>)`. Combine with the per-role gates to fine-tune exactly what each role triggers.
 
 # LFGAlert 1.1.1
 

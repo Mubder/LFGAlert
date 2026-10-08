@@ -365,6 +365,14 @@ function NS.BuildOptions()
     end
     self:ClearFocus()
   end)
+  -- Clicking away must keep a typed ID, not silently drop it.
+  eb:SetScript("OnEditFocusLost", function(self)
+    local id = tonumber(self:GetText())
+    if id then
+      NS.db.soundID = id
+      NS.db.useCustomSound = false
+    end
+  end)
 
   local testBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
   testBtn:SetSize(110, 24)
@@ -409,7 +417,8 @@ function NS.BuildOptions()
 
   Section(l("sec_role_sounds", "Sound by role"))
   Note(l("note_role_sounds", "Each role can use its own SoundKit ID, so you hear who signed up "
-    .. "without looking. 0 = use the global sound above. Or in chat: /lfgalert rolesound."), 34)
+    .. "without looking. 0 = use the global sound above. Find more IDs at wowhead.com/sounds "
+    .. "and preview any of them with /run PlaySound(<id>)"), 34)
   do
     local rows = {
       { key = "TANK", label = l("role_tank", "Tank"), color = "5b9bff" },
@@ -429,7 +438,7 @@ function NS.BuildOptions()
         local rs = NS.db.roleSounds and NS.db.roleSounds[rr.key]
         self:SetText(rs and tostring(rs) or "0")
       end)
-      box:SetScript("OnEnterPressed", function(self)
+      local function ApplyID(self, preview)
         local id = tonumber(self:GetText()) or 0
         NS.db.roleSounds = NS.db.roleSounds or {}
         if id > 0 then
@@ -437,9 +446,14 @@ function NS.BuildOptions()
         else
           NS.db.roleSounds[rr.key] = nil
         end
-        if id > 0 then NS.PlayAlertSound(nil, rr.key) end
+        if preview and id > 0 then NS.PlayAlertSound(nil, rr.key) end
+      end
+      box:SetScript("OnEnterPressed", function(self)
+        ApplyID(self, true)
         self:ClearFocus()
       end)
+      -- Clicking away must keep a typed ID, not silently drop it.
+      box:SetScript("OnEditFocusLost", function(self) ApplyID(self, false) end)
       local tb = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
       tb:SetSize(100, 22)
       tb:SetPoint("LEFT", box, "RIGHT", 8, 0)
@@ -450,6 +464,34 @@ function NS.BuildOptions()
       end)
       y = y - 30
     end
+  end
+
+  -- Click-to-preview gallery: the ID is printed on each button so users can
+  -- copy it straight into a role box above (or /run PlaySound(<id>) in chat).
+  Note(l("note_gallery", "Preview - click to hear, then type its ID into a role box:"), 20)
+  do
+    local gallery = {
+      { 8959, "Raid Warning" }, { 8960, "Ready Check" }, { 12867, "Level Up" },
+      { 543326, "Troll Cheer 3" }, { 539228, "Troll Cheer 1" }, { 4738557, "Dracthyr Cheer" },
+    }
+    local bx, bw = 24, 160
+    for i, g in ipairs(gallery) do
+      local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+      b:SetSize(bw, 22)
+      b:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
+      b:SetText(g[2] .. " " .. g[1])
+      local id = g[1]
+      b:SetScript("OnClick", function()
+        local ch = (NS.db.useMasterChannel ~= false) and "Master" or nil
+        pcall(PlaySound, id, ch)
+      end)
+      bx = bx + bw + 8
+      if (i % 3) == 0 then
+        bx = 24
+        y = y - 26
+      end
+    end
+    if (#gallery % 3) ~= 0 then y = y - 26 end
   end
 
   Section(l("sec_roles", "Alerts by role"))
