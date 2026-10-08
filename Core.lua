@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 39 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 40 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -69,9 +69,10 @@ local DEFAULTS = {
     popup = { TANK = true, HEALER = true, DAMAGER = true },
   },
   -- Per-role alert sounds (SoundKit IDs). nil/0 = use the global sound.
-  -- Distinct defaults so you can hear WHO signed up without looking:
-  -- tank = Raid Warning, healer = Ready Check, dps = Level Up.
-  roleSounds = { TANK = 8959, HEALER = 8960, DAMAGER = 12867 },
+  -- Distinct voice lines so you can hear WHO signed up without looking:
+  -- tank = troll male cheer #3, healer = troll male cheer #1,
+  -- dps = dracthyr allied-race cheer.
+  roleSounds = { TANK = 543326, HEALER = 539228, DAMAGER = 4738557 },
   stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } },
   log = {}, -- persisted entries
 }
