@@ -70,15 +70,11 @@ end
 
 -- known[applicantID] = { status = "applied", time = ..., members = {...}, comment = "..." }
 local known = {}
-NS._known = known
-NS.HandleApplicantSnapshot = HandleApplicantSnapshot
-NS.AdoptOrIncrementSession = AdoptOrIncrementSession
-NS.CopySnapMembers = CopySnapMembers
 -- Listing session: applicantIDs reset on every delist/relist, so stamp entries
 -- to never mix data across listings. The UI uses this to refuse acting on
 -- stale applicantIDs from previous listings (they can be reused by Blizzard).
 local listingSession = 1
-NS._NS._hadListing = false
+NS._hadListing = false
 
 function NS.CurrentListingSession()
   return listingSession
@@ -620,7 +616,7 @@ DelayedApplicantAlert = function(applicantID, attempt)
         and RoleAlertAllowed("popup", pm) then
         NS.OpenApplicants()
       end
-      BackfillLogEntry(applicantID, snap)
+      NS.BackfillLogEntry(applicantID, snap)
     elseif attempt >= 4 then
       -- Still nothing: alert with what we know (generic banner); the normal
       -- scan/backfill retries will promote it to the rich toast later.
