@@ -209,10 +209,13 @@ L.note_roles = "Uncheck a role to mute it per channel. Unknown roles (no data ye
 
 -- Sound by role
 L.sec_role_sounds  = "Sound by role"
-L.note_role_sounds = "Each role can use its own SoundKit ID, so you hear who signed up "
-  .. "without looking. 0 = use the global sound above. Find more IDs at wowhead.com/sounds "
-  .. "and preview any of them with /run PlaySound(<id>)"
-L.note_gallery     = "Preview - click to hear, then type its ID into a role box:"
+L.note_role_sounds = "Pick a sound per role from the dropdown (it plays when selected), "
+  .. "or type any ID into the box (0 = the global sound above). More IDs: wowhead.com/sounds, "
+  .. "preview with /run PlaySoundFile(<id>)"
+L.note_gallery     = "Preview - click to hear any preset:"
+L.rs_global        = "Global sound"
+L.rs_custom_fmt    = "Custom (%s)"
+L.rs_pick          = "Pick a sound (plays on select)"
 L.row_sound  = "Sound for:"
 L.row_chat   = "Chat for:"
 L.row_screen = "Screen alert for:"

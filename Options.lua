@@ -427,10 +427,9 @@ function NS.BuildOptions()
     .. "(drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"), 34)
 
   Section(l("sec_role_sounds", "Sound by role"))
-  Note(l("note_role_sounds", "Each role can use its own SoundKit ID, so you hear who signed up "
-    .. "without looking. 0 = use the global sound above. Find more IDs at wowhead.com/sounds "
-    .. "and preview any of them with /run PlaySound(<id>)"), 34)
-  Note("Per-role custom sound file: /lfgalert rolesoundfile tank|healer|dps <path>|off")
+  Note(l("note_role_sounds", "Pick a sound per role from the dropdown (it plays when selected), "
+    .. "or type any ID into the box (0 = the global sound above). More IDs: wowhead.com/sounds, "
+    .. "preview with /run PlaySoundFile(<id>)"), 34)
   do
     local rows = {
       { key = "TANK", label = l("role_tank", "Tank"), color = "5b9bff" },
@@ -441,9 +440,48 @@ function NS.BuildOptions()
       local lbl = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
       lbl:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y - 4)
       lbl:SetText("|cff" .. rr.color .. rr.label .. "|r:")
+      -- Dropdown: pick from the curated presets (plays on select) or the
+      -- global sound; the EditBox next to it remains for any custom ID.
+      local function CurrentLabel()
+        local rs = NS.db.roleSounds and NS.db.roleSounds[rr.key]
+        if not rs then return l("rs_global", "Global sound") end
+        for _, p in ipairs(NS.SOUND_PRESETS or {}) do
+          if p[1] == rs then return p[2] end
+        end
+        return l("rs_custom_fmt", "Custom (%s)"):format(rs)
+      end
+      local dd = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+      dd:SetSize(170, 22)
+      dd:SetPoint("LEFT", lbl, "RIGHT", 10, 0)
+      dd:SetText(CurrentLabel())
+      dd:SetScript("OnClick", function(self)
+        if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
+        MenuUtil.CreateContextMenu(self, function(_, root)
+          root:CreateTitle(l("rs_pick", "Pick a sound (plays on select)"))
+          root:CreateRadio(l("rs_global", "Global sound"),
+            function() return (NS.db.roleSounds and NS.db.roleSounds[rr.key]) == nil end,
+            function()
+              NS.db.roleSounds = NS.db.roleSounds or {}
+              NS.db.roleSounds[rr.key] = nil
+              dd:SetText(CurrentLabel())
+            end)
+          for _, p in ipairs(NS.SOUND_PRESETS or {}) do
+            local id, name = p[1], p[2]
+            root:CreateRadio(name .. "  (" .. id .. ")",
+              function() return NS.db.roleSounds and NS.db.roleSounds[rr.key] == id end,
+              function()
+                NS.db.roleSounds = NS.db.roleSounds or {}
+                NS.db.roleSounds[rr.key] = id
+                dd:SetText(CurrentLabel())
+                local ch = (NS.db.useMasterChannel ~= false) and "Master" or nil
+                NS.PlaySoundID(id, ch)
+              end)
+          end
+        end)
+      end)
       local box = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
       box:SetSize(90, 24)
-      box:SetPoint("LEFT", lbl, "RIGHT", 10, 0)
+      box:SetPoint("LEFT", dd, "RIGHT", 10, 0)
       box:SetAutoFocus(false)
       box:SetNumeric(true)
       box:SetScript("OnShow", function(self)
@@ -459,6 +497,7 @@ function NS.BuildOptions()
           NS.db.roleSounds[rr.key] = nil
         end
         if preview and id > 0 then NS.PlayAlertSound(nil, rr.key) end
+        dd:SetText(CurrentLabel())
       end
       box:SetScript("OnEnterPressed", function(self)
         ApplyID(self, true)
@@ -467,7 +506,7 @@ function NS.BuildOptions()
       -- Clicking away must keep a typed ID, not silently drop it.
       box:SetScript("OnEditFocusLost", function(self) ApplyID(self, false) end)
       local tb = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-      tb:SetSize(100, 22)
+      tb:SetSize(90, 22)
       tb:SetPoint("LEFT", box, "RIGHT", 8, 0)
       tb:SetText(l("btn_test", "Test sound"))
       tb:SetScript("OnClick", function()
@@ -478,16 +517,14 @@ function NS.BuildOptions()
     end
   end
 
-  -- Click-to-preview gallery: the ID is printed on each button so users can
-  -- copy it straight into a role box above (or /run PlaySound(<id>) in chat).
-  Note(l("note_gallery", "Preview - click to hear, then type its ID into a role box:"), 20)
+  -- Click-to-preview gallery, built from the shared preset list (drops grow
+  -- automatically when NS.SOUND_PRESETS gains entries).
+  Note(l("note_gallery", "Preview - click to hear any preset:"), 20)
   do
-    local gallery = {
-      { 8959, "Raid Warning" }, { 8960, "Ready Check" }, { 12867, "Level Up" },
-      { 543326, "Troll Cheer 3" }, { 539228, "Troll Cheer 1" }, { 4738557, "Dracthyr Cheer" },
-    }
     local bx, bw = 24, 160
-    for i, g in ipairs(gallery) do
+    local n = 0
+    for _, g in ipairs(NS.SOUND_PRESETS or {}) do
+      n = n + 1
       local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
       b:SetSize(bw, 22)
       b:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
@@ -498,12 +535,12 @@ function NS.BuildOptions()
         NS.PlaySoundID(id, ch)
       end)
       bx = bx + bw + 8
-      if (i % 3) == 0 then
+      if (n % 3) == 0 then
         bx = 24
         y = y - 26
       end
     end
-    if (#gallery % 3) ~= 0 then y = y - 26 end
+    if (n % 3) ~= 0 then y = y - 26 end
   end
 
   Section(l("sec_roles", "Alerts by role"))

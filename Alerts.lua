@@ -29,6 +29,17 @@ end
 
 local lastSoundKey, lastSoundAt = nil, 0
 
+-- Curated sound presets for the role dropdowns (Options + /lfgalert).
+-- Data-only: send more { id, label } pairs and they appear everywhere.
+NS.SOUND_PRESETS = {
+  { 8959, "Raid Warning" },
+  { 8960, "Ready Check" },
+  { 12867, "Level Up" },
+  { 543326, "Troll Cheer 3" },
+  { 539228, "Troll Cheer 1" },
+  { 4738557, "Dracthyr Cheer" },
+}
+
 -- Play a sound by ID, auto-detecting its semantics: classic SoundKit IDs are
 -- small and play via PlaySound; Wowhead-era IDs (roughly 100k+) are sound
 -- FILE IDs which PlaySound silently ignores - those play via PlaySoundFile,
