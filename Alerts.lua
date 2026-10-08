@@ -29,6 +29,20 @@ end
 
 local lastSoundKey, lastSoundAt = nil, 0
 
+-- Play a sound by ID, auto-detecting its semantics: classic SoundKit IDs are
+-- small and play via PlaySound; Wowhead-era IDs (roughly 100k+) are sound
+-- FILE IDs which PlaySound silently ignores - those play via PlaySoundFile,
+-- with a PlaySound fallback in case the number is a kit after all.
+function NS.PlaySoundID(id, channel)
+  id = tonumber(id)
+  if not id or id <= 0 then return end
+  if id >= 100000 then
+    local ok, played = pcall(PlaySoundFile, id, channel)
+    if ok and played ~= false then return end
+  end
+  pcall(PlaySound, id, channel)
+end
+
 function NS.PlayAlertSound(tag, role)
   if not NS.db or not NS.db.soundEnabled then return end
   -- Debounce: the same applicant pinging twice within 3s (double events,
@@ -57,8 +71,7 @@ function NS.PlayAlertSound(tag, role)
     local rid = NS.db.roleSounds and tonumber(NS.db.roleSounds[roleKey])
     if rid and rid > 0 then
       Trace("sound: role " .. roleKey .. " id " .. rid)
-      local ok = pcall(PlaySound, rid, channel)
-      if not ok then pcall(PlaySound, 8959, channel) end
+      NS.PlaySoundID(rid, channel)
       return
     end
   end
@@ -72,10 +85,7 @@ function NS.PlayAlertSound(tag, role)
     -- Fall through to SoundKit ID if the file path failed.
   end
   local id = tonumber(NS.db.soundID) or 8959
-  local ok = pcall(PlaySound, id, channel)
-  if not ok then
-    pcall(PlaySound, 8959, channel)
-  end
+  NS.PlaySoundID(id, channel)
 end
 
 

@@ -495,7 +495,7 @@ function NS.BuildOptions()
       local id = g[1]
       b:SetScript("OnClick", function()
         local ch = (NS.db.useMasterChannel ~= false) and "Master" or nil
-        pcall(PlaySound, id, ch)
+        NS.PlaySoundID(id, ch)
       end)
       bx = bx + bw + 8
       if (i % 3) == 0 then
