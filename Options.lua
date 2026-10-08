@@ -605,6 +605,78 @@ function NS.BuildOptions()
     function() return NS.db.autoDecline end,
     function(v) NS.db.autoDecline = v end)
 
+  Section(l("sec_autoaccept", "Auto-invite rules"))
+  Note(l("note_aa", "Opt-in per role: applicants of an enabled role meeting its thresholds are "
+    .. "auto-invited - only while the group still needs that role and has room. "
+    .. "Example: enable Healer with min ilvl 310. Announced in chat, always logged."), 34)
+  AddCB(l("cb_aa_master", "Enable auto-invite (rules below decide who)"),
+    function() return NS.db.autoAccept == true end, function(v) NS.db.autoAccept = v end)
+  AddCB(l("cb_aa_missing", "Only when the group still needs that role"),
+    function() return NS.db.autoAcceptOnlyIfMissing ~= false end,
+    function(v) NS.db.autoAcceptOnlyIfMissing = v end)
+  do
+    local rows = {
+      { key = "TANK", label = l("role_tank", "Tank"), color = "5b9bff" },
+      { key = "HEALER", label = l("role_healer", "Heal"), color = "4dff4d" },
+      { key = "DAMAGER", label = l("role_dps", "DPS"), color = "ff6b6b" },
+    }
+    for _, rr in ipairs(rows) do
+      local cb = Checkbox(content, string.format("|cff%s%s|r", rr.color, rr.label),
+        function()
+          local r = NS.db.autoAcceptRoles and NS.db.autoAcceptRoles[rr.key]
+          return r and r.enabled or false
+        end,
+        function(v)
+          NS.db.autoAcceptRoles = NS.db.autoAcceptRoles or {}
+          NS.db.autoAcceptRoles[rr.key] = NS.db.autoAcceptRoles[rr.key] or {}
+          NS.db.autoAcceptRoles[rr.key].enabled = v and true or false
+        end)
+      cb:SetPoint("TOPLEFT", content, "TOPLEFT", 44, y)
+      local l1 = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      l1:SetPoint("LEFT", cb, "RIGHT", 130, 0)
+      l1:SetText("|cffffd100" .. l("aa_min_ilvl", "min ilvl") .. "|r")
+      local function ApplyIlvl(self)
+        local r = NS.db.autoAcceptRoles and NS.db.autoAcceptRoles[rr.key] or {}
+        r.minIlvl = math.max(0, tonumber(self:GetText()) or 0)
+        NS.db.autoAcceptRoles = NS.db.autoAcceptRoles or {}
+        NS.db.autoAcceptRoles[rr.key] = r
+      end
+      local b1 = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+      b1:SetSize(60, 22)
+      b1:SetPoint("LEFT", l1, "RIGHT", 8, 0)
+      b1:SetAutoFocus(false)
+      b1:SetNumeric(true)
+      b1:SetScript("OnShow", function(self)
+        local r = NS.db.autoAcceptRoles and NS.db.autoAcceptRoles[rr.key]
+        self:SetText(r and tostring(r.minIlvl or 0) or "0")
+      end)
+      b1:SetScript("OnEnterPressed", function(self) ApplyIlvl(self) self:ClearFocus() end)
+      b1:SetScript("OnEditFocusLost", ApplyIlvl)
+      local l2 = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+      l2:SetPoint("LEFT", b1, "RIGHT", 12, 0)
+      l2:SetText("|cffffd100" .. l("aa_min_score", "min M+") .. "|r")
+      local function ApplyScore(self)
+        local r = NS.db.autoAcceptRoles and NS.db.autoAcceptRoles[rr.key] or {}
+        r.minScore = math.max(0, tonumber(self:GetText()) or 0)
+        NS.db.autoAcceptRoles = NS.db.autoAcceptRoles or {}
+        NS.db.autoAcceptRoles[rr.key] = r
+      end
+      local b2 = CreateFrame("EditBox", nil, content, "InputBoxTemplate")
+      b2:SetSize(70, 22)
+      b2:SetPoint("LEFT", l2, "RIGHT", 8, 0)
+      b2:SetAutoFocus(false)
+      b2:SetNumeric(true)
+      b2:SetScript("OnShow", function(self)
+        local r = NS.db.autoAcceptRoles and NS.db.autoAcceptRoles[rr.key]
+        self:SetText(r and tostring(r.minScore or 0) or "0")
+      end)
+      b2:SetScript("OnEnterPressed", function(self) ApplyScore(self) self:ClearFocus() end)
+      b2:SetScript("OnEditFocusLost", ApplyScore)
+      y = y - 28
+    end
+  end
+
+
   Section(l("sec_data", "Data & Stats"))
   local statsText = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   statsText:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)

@@ -481,8 +481,82 @@ function NS.MaybeAutoDecline(applicantID, snap)
       or (ilvlFail and l("ar_ilvl", "Low ILvl") or l("ar_score", "Low M+")),
     session = listingSession,
   }
+
   pcall(C_LFGList.DeclineApplicant, applicantID)
   NS.ChatMessage(l("auto_declined_fmt", "Auto-declined %s (%s)"):format(ShortName(m.name), table.concat(reasons, ", ")))
+  return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Auto-accept: invite an applicant whose role rule matches (enabled + min
+-- ilvl / M+ score), while the group still needs that role and has room.
+-- Same safety contract as auto-decline: never without real data, re-verifies
+-- the applicant is still pending, announces in chat, always logged.
+-- ---------------------------------------------------------------------------
+
+local function GroupHasRole(roleWanted)
+  local function UnitHasRole(unit)
+    if not UnitExists(unit) then return false end
+    return UnitGroupRolesAssigned(unit) == roleWanted
+  end
+  if UnitHasRole("player") then return true end
+  if IsInRaid() then
+    for ri = 1, 40 do
+      if UnitHasRole("raid" .. ri) then return true end
+    end
+  else
+    for pi = 1, 4 do
+      if UnitHasRole("party" .. pi) then return true end
+    end
+  end
+  return false
+end
+
+function NS.MaybeAutoAccept(applicantID, snap)
+  local db = NS.db
+  if not db or not db.autoAccept then return false end
+  if not applicantID or applicantID == 0 then return false end
+  local rules = db.autoAcceptRoles
+  if type(rules) ~= "table" then return false end
+  local pm = snap and snap.members and snap.members[1]
+  if not (pm and pm.name) then return false end
+  local role = NS.ResolveRole(pm)
+  if not role then return false end
+  local rule = rules[role]
+  if not (type(rule) == "table" and rule.enabled) then return false end
+  local ok, info = pcall(C_LFGList.GetApplicantInfo, applicantID)
+  if not (ok and info and info.applicationStatus == "applied") then return false end
+  if (rule.minIlvl or 0) > 0 and not (pm.itemLevel and pm.itemLevel >= rule.minIlvl) then
+    Trace(string.format("#%s auto-accept skip: ilvl %s < %d",
+      tostring(applicantID), tostring(pm.itemLevel), rule.minIlvl))
+    return false
+  end
+  if (rule.minScore or 0) > 0 and NS.EffectiveScore(pm) < rule.minScore then
+    Trace(string.format("#%s auto-accept skip: M+ %d < %d",
+      tostring(applicantID), NS.EffectiveScore(pm), rule.minScore))
+    return false
+  end
+  if db.autoAcceptOnlyIfMissing ~= false and GroupHasRole(role) then
+    Trace(string.format("#%s auto-accept skip: group already has a %s",
+      tostring(applicantID), role:lower()))
+    return false
+  end
+  local maxGroup = 5
+  if C_LFGList and C_LFGList.GetActiveEntryInfo then
+    local okE, entry = pcall(C_LFGList.GetActiveEntryInfo)
+    if okE and type(entry) == "table" and type(entry.maxMembers) == "number"
+      and entry.maxMembers > 0 then
+      maxGroup = entry.maxMembers
+    end
+  end
+  if (GetNumGroupMembers() or 0) >= maxGroup then
+    Trace("#" .. tostring(applicantID) .. " auto-accept skip: group full")
+    return false
+  end
+  pcall(C_LFGList.InviteApplicant, applicantID)
+  NS.ChatMessage(l("auto_accepted_fmt", "Auto-invited %s (%s, ilvl %s)"):format(
+    ShortName(pm.name), role:lower(),
+    pm.itemLevel and math.floor(pm.itemLevel) or "?"))
   return true
 end
 
@@ -651,6 +725,7 @@ local function HandleApplicantSnapshot(applicantID, snap, reason)
         DelayedApplicantAlert(applicantID, 1)
       end
       NS.MaybeAutoDecline(applicantID, snap)
+      NS.MaybeAutoAccept(applicantID, snap)
     elseif snap.status ~= nil then
       NS.AnnounceStatusChange(applicantID, nil, snap.status, snap)
     end

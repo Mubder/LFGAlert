@@ -47,6 +47,7 @@ read_globals = {
   "GroupFinderFrame", "PVEFrame", "PVEFrame_ShowFrame", "LFGListFrame",
   "LFGListFrame_SetActivePanel",
   "UnitIsGroupLeader", "UnitName", "UnitClass", "UnitLevel", "IsInGroup",
+  "UnitExists", "UnitGroupRolesAssigned", "IsInRaid", "GetNumGroupMembers",
   "InCombatLockdown", "GetMouseFoci",
   -- Menus / chat interop
   "MenuUtil", "EasyMenu", "UIDropDownMenuTemplate",

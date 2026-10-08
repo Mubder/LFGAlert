@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 49 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 50 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -54,6 +54,16 @@ local DEFAULTS = {
   assumeOwnKey = true,
   -- Auto-decline applicants below minIlvl/minScore (default OFF).
   autoDecline = false,
+  -- Auto-invite applicants matching a per-role rule (all OFF by default).
+  -- Rule: role enabled + optional min ilvl / min M+ score; only fires while
+  -- the group still needs that role (autoAcceptOnlyIfMissing) and has room.
+  autoAccept = false,
+  autoAcceptOnlyIfMissing = true,
+  autoAcceptRoles = {
+    TANK = { enabled = false, minIlvl = 0, minScore = 0 },
+    HEALER = { enabled = false, minIlvl = 0, minScore = 0 },
+    DAMAGER = { enabled = false, minIlvl = 0, minScore = 0 },
+  },
   -- Master + session-summary mutes (everything else has its own checkbox).
   muteAll = false,
   statsSummary = true,

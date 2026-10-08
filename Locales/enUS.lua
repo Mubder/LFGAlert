@@ -219,3 +219,13 @@ L.row_sound  = "Sound for:"
 L.row_chat   = "Chat for:"
 L.row_screen = "Screen alert for:"
 L.row_popup = "Popup for:"
+
+-- Auto-invite rules
+L.sec_autoaccept   = "Auto-invite rules"
+L.note_aa          = "Opt-in per role: applicants of an enabled role meeting its thresholds are "
+  .. "auto-invited - only while the group still needs that role and has room."
+L.cb_aa_master     = "Enable auto-invite (rules below decide who)"
+L.cb_aa_missing    = "Only when the group still needs that role"
+L.aa_min_ilvl      = "min ilvl"
+L.aa_min_score     = "min M+"
+L.auto_accepted_fmt = "Auto-invited %s (%s, ilvl %s)"

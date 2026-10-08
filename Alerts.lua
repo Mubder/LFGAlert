@@ -358,6 +358,7 @@ local function BackfillLogEntry(applicantID, snap)
         -- MaybeAutoDecline re-verifies the applicant is still pending, so it
         -- is safe to attempt on every backfill.
         NS.MaybeAutoDecline(applicantID, snap)
+        NS.MaybeAutoAccept(applicantID, snap)
         changed = true
       end
     end

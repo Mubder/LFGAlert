@@ -76,6 +76,96 @@ SlashCmdList["LFGALERT"] = function(msg)
         print("|cffff2020[LFGAlert]|r Give a SoundKit ID or 'off'.")
       end
     end
+  elseif cmd == "autoaccept" then
+    -- /lfgalert autoaccept [on|off] | tank|healer|dps [on|off|<ilvl> [<score>]]
+    local map = {
+      tank = "TANK", t = "TANK",
+      healer = "HEALER", heal = "HEALER", h = "HEALER",
+      dps = "DAMAGER", damager = "DAMAGER", d = "DAMAGER",
+    }
+    local which, val = rest:match("^(%S*)%s*(.-)$")
+    local key = map[which]
+    NS.db.autoAcceptRoles = NS.db.autoAcceptRoles or {}
+    if which == "" or which == "on" or which == "off" then
+      if which == "" then NS.db.autoAccept = not NS.db.autoAccept
+      else NS.db.autoAccept = (which == "on") end
+      local onRoles = ""
+      for rk, rv in pairs(NS.db.autoAcceptRoles) do
+        if type(rv) == "table" and rv.enabled then onRoles = onRoles .. rk:lower() .. " " end
+      end
+      print("|cffff2020[LFGAlert]|r Auto-accept " .. (NS.db.autoAccept and "ON" or "OFF")
+        .. " (roles: " .. (onRoles ~= "" and onRoles or "none") .. ")")
+    elseif not key then
+      print("|cffff2020[LFGAlert]|r Usage: /lfgalert autoaccept [on|off]")
+      print("  /lfgalert autoaccept healer 310        (enable: min ilvl 310)")
+      print("  /lfgalert autoaccept tank 320 2400     (ilvl + min M+ score)")
+      print("  /lfgalert autoaccept dps on|off        (toggle without thresholds)")
+    elseif val == "" or val == "on" or val == "off" then
+      local r = NS.db.autoAcceptRoles[key] or {}
+      if val == "" then r.enabled = not r.enabled
+      else r.enabled = (val == "on") end
+      NS.db.autoAcceptRoles[key] = r
+      print(string.format("|cffff2020[LFGAlert]|r Auto-accept %s: %s (min ilvl %d, min M+ %d)",
+        key:lower(), r.enabled and "ON" or "OFF", r.minIlvl or 0, r.minScore or 0))
+    else
+      local ilvlS, scoreS = val:match("^(%d+)%s*(%d*)$")
+      if ilvlS then
+        local r = NS.db.autoAcceptRoles[key] or {}
+        r.enabled = true
+        r.minIlvl = tonumber(ilvlS) or 0
+        r.minScore = tonumber(scoreS) or 0
+        NS.db.autoAcceptRoles[key] = r
+        print(string.format("|cffff2020[LFGAlert]|r Auto-accept %s: ON (min ilvl %d, min M+ %d)",
+          key:lower(), r.minIlvl, r.minScore))
+      else
+        print("|cffff2020[LFGAlert]|r Give numbers: /lfgalert autoaccept healer 310")
+      end
+    end
+  elseif cmd == "autoaccept" then
+    -- /lfgalert autoaccept [on|off] | tank|healer|dps [on|off|<ilvl> [<score>]]
+    local map = {
+      tank = "TANK", t = "TANK",
+      healer = "HEALER", heal = "HEALER", h = "HEALER",
+      dps = "DAMAGER", damager = "DAMAGER", d = "DAMAGER",
+    }
+    local which, val = rest:match("^(%S*)%s*(.-)$")
+    local key = map[which]
+    NS.db.autoAcceptRoles = NS.db.autoAcceptRoles or {}
+    if which == "" or which == "on" or which == "off" then
+      if which == "" then NS.db.autoAccept = not NS.db.autoAccept
+      else NS.db.autoAccept = (which == "on") end
+      local onRoles = ""
+      for rk, rv in pairs(NS.db.autoAcceptRoles) do
+        if type(rv) == "table" and rv.enabled then onRoles = onRoles .. rk:lower() .. " " end
+      end
+      print("|cffff2020[LFGAlert]|r Auto-accept " .. (NS.db.autoAccept and "ON" or "OFF")
+        .. " (roles: " .. (onRoles ~= "" and onRoles or "none") .. ")")
+    elseif not key then
+      print("|cffff2020[LFGAlert]|r Usage: /lfgalert autoaccept [on|off]")
+      print("  /lfgalert autoaccept healer 310        (enable: min ilvl 310)")
+      print("  /lfgalert autoaccept tank 320 2400     (ilvl + min M+ score)")
+      print("  /lfgalert autoaccept dps on|off        (toggle without thresholds)")
+    elseif val == "" or val == "on" or val == "off" then
+      local r = NS.db.autoAcceptRoles[key] or {}
+      if val == "" then r.enabled = not r.enabled
+      else r.enabled = (val == "on") end
+      NS.db.autoAcceptRoles[key] = r
+      print(string.format("|cffff2020[LFGAlert]|r Auto-accept %s: %s (min ilvl %d, min M+ %d)",
+        key:lower(), r.enabled and "ON" or "OFF", r.minIlvl or 0, r.minScore or 0))
+    else
+      local ilvlS, scoreS = val:match("^(%d+)%s*(%d*)$")
+      if ilvlS then
+        local r = NS.db.autoAcceptRoles[key] or {}
+        r.enabled = true
+        r.minIlvl = tonumber(ilvlS) or 0
+        r.minScore = tonumber(scoreS) or 0
+        NS.db.autoAcceptRoles[key] = r
+        print(string.format("|cffff2020[LFGAlert]|r Auto-accept %s: ON (min ilvl %d, min M+ %d)",
+          key:lower(), r.minIlvl, r.minScore))
+      else
+        print("|cffff2020[LFGAlert]|r Give numbers: /lfgalert autoaccept healer 310")
+      end
+    end
   elseif cmd == "rolesoundfile" then
     -- /lfgalert rolesoundfile tank|healer|dps <path>|off  (overrides the ID)
     local map = {
@@ -349,6 +439,8 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("  /lfgalert groupbykey [on|off] - group log rows under their key")
     print("  /lfgalert export|import - share or restore your settings")
     print("  /lfgalert rolesoundfile tank|healer|dps <path>|off - per-role sound file")
+    print("  /lfgalert autoaccept [on|off] | role <ilvl> [<score>] - auto-invite rules")
+    print("  /lfgalert autoaccept [on|off] | role <ilvl> [<score>] - auto-invite rules")
     print("  /lfgalert resetui - reset log window position / size / scale")
     print("  /lfgalert stats - session + all-time summary")
     print("  /lfgalert debug - dump log state (entries/filter/window)")
