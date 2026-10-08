@@ -84,7 +84,11 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
 
 - `LFGAlert.toc` — addon manifest (Interface 120100)
 - `Locales/enUS.lua` — all user-facing strings (translation-ready)
-- `Core.lua` — event tracking, alerts, toasts, sounds, log storage, slash commands
+- `Core.lua` — namespace, DB, event frame/boot, roles, thresholds, keybinds
+- `Listing.lua` — live listing context (dungeon + key level parsing)
+- `Applicants.lua` — snapshots, log/stats storage, scanning, auto-decline, row actions
+- `Alerts.lua` — sounds, stacked toasts, chat/center alerts, Group Finder popup
+- `Slash.lua` — slash commands + settings export/import
 - `LogFrame.lua` — log window UI (scroll list, sorting, right-click menu, tooltips)
 - `Options.lua` — minimap button + Settings panel
 - `Bindings.xml` — keybinds (toggle log, open applicants)

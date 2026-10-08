@@ -8,5 +8,9 @@
 
 Locales\enUS.lua
 Core.lua
+Listing.lua
+Applicants.lua
+Alerts.lua
+Slash.lua
 LogFrame.lua
 Options.lua
