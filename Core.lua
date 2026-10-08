@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 48 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 49 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -70,9 +70,9 @@ local DEFAULTS = {
     popup = { TANK = true, HEALER = true, DAMAGER = true },
   },
   -- Per-role alert sounds (SoundKit IDs). nil/0 = use the global sound.
-  -- Defaults: tank = murloc aggro, healer = dragon whelp, dps = Arathi female
-  -- aggro. Users pick from the curated dropdown (NS.SOUND_PRESETS).
-  roleSounds = { TANK = 556000, HEALER = 547630, DAMAGER = 6053336 },
+  -- Defaults: the classic trio - tank = Raid Warning, healer = Ready Check,
+  -- dps = Level Up. The curated dropdown (NS.SOUND_PRESETS) offers 50+ more.
+  roleSounds = { TANK = 8959, HEALER = 8960, DAMAGER = 12867 },
   -- Optional per-role custom sound FILES (override the role's SoundKit ID).
   roleSoundFiles = { TANK = "", HEALER = "", DAMAGER = "" },
   stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } },
