@@ -27,13 +27,37 @@ LFGAlert — never miss an applicant. The moment someone signs up to your Premad
 
 ★ Requirements + auto-decline — set a min item level / M+ score: qualifying rows turn green with a star, and optional auto-decline removes the rest for you (always announced, always logged, never fires without real data).
 
-🔔 Four alerts, your call — sound (Master channel, so you hear it even with game audio low), center-screen raid warning, chat message and taskbar flash. Each one toggles independently.
+🔔 Four alerts, your call — sound (Master channel, so you hear it even with game audio low), center-screen toast, chat message and taskbar flash. Each one toggles independently — and per role: mute Tank/Healer/DPS separately for sound, chat, screen and the popup.
 
-📊 Stats per listing and all-time (accept rate, accepted ilvl/M+ averages), custom sounds (.ogg/.mp3 or any SoundKit ID), a minimap button (left: open log, right: sound on/off, drag to move) and a full settings UI — Esc → Options → AddOns → LFGAlert.
+🎵 Sound by role — each role plays its own sound so you hear WHO signed up without looking (defaults: troll cheer / troll cheer / dracthyr cheer). Set any SoundKit ID per role in Settings (with a click-to-preview gallery), a per-role custom .ogg/.mp3, or browse more IDs at wowhead.com/sounds.
 
-Slash: /lfgalert show, test, sound, minilvl, minscore, autodecline, stats, config and more (/lfga shorthand).
+📣 Stacked toasts — several players signing up at once each get their own line ("Name - [role icon] Tank  Protection Warrior"), up to 5 visible; nobody's alert is dropped, and reloads while listing no longer re-alert old applicants.
+
+📊 Stats per listing and all-time (accept rate, accepted ilvl/M+ averages), custom sounds, settings export/import (/lfgalert export), keybinds for the log and the applicant panel, a minimap button (left: open log, right: sound on/off, drag to move) and a full settings UI — Esc → Options → AddOns → LFGAlert.
+
+Slash: /lfgalert show, test, sound, rolesound, export, minilvl, minscore, autodecline, stats, config and more (/lfga shorthand).
 
 Leader-only alerts • no dependencies (Raider.IO optional) • Midnight-ready • MIT licensed
+
+## Changelog v1.2.0
+
+- Sound by role: Tank / Healer / DPS each play their own alert sound
+  (SoundKit ID or custom file per role), settable in Settings or chat;
+  click-to-preview gallery + typed IDs save on click-away
+- Keybinds: toggle the applicant log and open the Group Finder
+  applicants panel (Game Menu → Key Bindings → LFGAlert)
+- Settings export / import as a shareable string
+
+## Changelog v1.1.1
+
+- Rich on-screen alert: name + role icon + colored spec
+- Stacked toasts replace the raid warning (Blizzard's holds only 2
+  messages and dropped the rest during simultaneous signups)
+- Fixed alerts being dropped for follow-up applicants (Blizzard's
+  "not reported yet" status was treated as "left the queue")
+- No re-alert storm on login/reload while listing; duplicate log rows
+  and stale invite/decline buttons fixed the same way
+- Role icons render again on Midnight; new custom addon icon
 
 ## First-release changelog (v1.1.0)
 

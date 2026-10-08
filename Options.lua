@@ -430,6 +430,7 @@ function NS.BuildOptions()
   Note(l("note_role_sounds", "Each role can use its own SoundKit ID, so you hear who signed up "
     .. "without looking. 0 = use the global sound above. Find more IDs at wowhead.com/sounds "
     .. "and preview any of them with /run PlaySound(<id>)"), 34)
+  Note("Per-role custom sound file: /lfgalert rolesoundfile tank|healer|dps <path>|off")
   do
     local rows = {
       { key = "TANK", label = l("role_tank", "Tank"), color = "5b9bff" },

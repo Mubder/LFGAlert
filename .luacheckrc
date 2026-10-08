@@ -22,6 +22,9 @@ globals = {
   "LFGAlertMinimapButton",
   "LFGAlertToastFrame",
   "LFGAlertMinimapMenu",
+  "BINDING_HEADER_LFGALERT",
+  "BINDING_NAME_LFGALERT_TOGGLELOG",
+  "BINDING_NAME_LFGALERT_OPENAPPLICANTS",
 }
 
 -- WoW API + FrameXML we read. Not exhaustive: extend as new APIs are used.

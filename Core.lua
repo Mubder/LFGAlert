@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 42 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 43 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -73,6 +73,8 @@ local DEFAULTS = {
   -- tank = troll male cheer #3, healer = troll male cheer #1,
   -- dps = dracthyr allied-race cheer.
   roleSounds = { TANK = 543326, HEALER = 539228, DAMAGER = 4738557 },
+  -- Optional per-role custom sound FILES (override the role's SoundKit ID).
+  roleSoundFiles = { TANK = "", HEALER = "", DAMAGER = "" },
   stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } },
   log = {}, -- persisted entries
 }
@@ -784,13 +786,24 @@ function NS.PlayAlertSound(tag, role)
     lastSoundKey, lastSoundAt = tag, now
   end
   local channel = NS.db.useMasterChannel and "Master" or nil
-  -- Per-role sound: a role-specific SoundKit ID overrides the custom file
-  -- and the global ID, so each role is instantly recognizable by ear.
+  -- Per-role sound: a role-specific custom FILE wins, then a role-specific
+  -- SoundKit ID, then the global custom file / global ID - so each role is
+  -- instantly recognizable by ear.
   if role then
     local roleKey = (role .. ""):upper()
     if roleKey == "DPS" then roleKey = "DAMAGER" end
+    local file = NS.db.roleSoundFiles and NS.db.roleSoundFiles[roleKey]
+    if type(file) == "string" and file ~= "" then
+      local okF, playedF = pcall(PlaySoundFile, file, channel)
+      if okF and playedF ~= false then
+        Trace("sound: role " .. roleKey .. " file")
+        return
+      end
+      -- Bad file path: fall through to the role's SoundKit ID.
+    end
     local rid = NS.db.roleSounds and tonumber(NS.db.roleSounds[roleKey])
     if rid and rid > 0 then
+      Trace("sound: role " .. roleKey .. " id " .. rid)
       local ok = pcall(PlaySound, rid, channel)
       if not ok then pcall(PlaySound, 8959, channel) end
       return
@@ -931,6 +944,7 @@ local function ApplicantToast(text)
   if not (NS.db and NS.db.raidWarning) then return end
   local ok, shown = pcall(ApplicantToastShow, text)
   if not ok or shown == false then
+    Trace("toast: stack failed (" .. tostring(ok) .. "), falling back to raid warning")
     CenterMessage(text)
   end
 end
@@ -968,6 +982,7 @@ function NS.AlertNewApplicant(applicantID, snap)
     pcall(FlashClientIcon)
   end
   if NS.db and NS.db.autoOpenLFG and RoleAlertAllowed("popup", pm) then
+    Trace("popup: opening Group Finder applicants")
     NS.OpenApplicants()
   end
   if not SnapHasData(snap) then
@@ -1612,6 +1627,29 @@ SlashCmdList["LFGALERT"] = function(msg)
         print("|cffff2020[LFGAlert]|r Give a SoundKit ID or 'off'.")
       end
     end
+  elseif cmd == "rolesoundfile" then
+    -- /lfgalert rolesoundfile tank|healer|dps <path>|off  (overrides the ID)
+    local map = {
+      tank = "TANK", t = "TANK",
+      healer = "HEALER", heal = "HEALER", h = "HEALER",
+      dps = "DAMAGER", damager = "DAMAGER", d = "DAMAGER",
+    }
+    local which, val = rest:match("^(%S+)%s*(.-)$")
+    local key = which and map[which:lower()]
+    if not key then
+      print("|cffff2020[LFGAlert]|r Usage: /lfgalert rolesoundfile tank|healer|dps <path>|off")
+      print("  Example: /lfgalert rolesoundfile tank Interface\\AddOns\\LFGAlert\\Sounds\\tank.ogg")
+    elseif val == "" or val == "off" or val == "clear" then
+      NS.db.roleSoundFiles = NS.db.roleSoundFiles or {}
+      NS.db.roleSoundFiles[key] = ""
+      print("|cffff2020[LFGAlert]|r " .. key:lower() .. " custom file OFF (role SoundKit ID applies again).")
+    else
+      NS.db.roleSoundFiles = NS.db.roleSoundFiles or {}
+      NS.db.roleSoundFiles[key] = val
+      print("|cffff2020[LFGAlert]|r " .. key:lower() .. " custom file set (playing...)")
+      local ch = NS.db.useMasterChannel and "Master" or nil
+      pcall(PlaySoundFile, val, ch)
+    end
   elseif cmd == "soundfile" then
     -- /lfgalert soundfile Interface\AddOns\LFGAlert\Sounds\alert.ogg
     -- /lfgalert soundfile off  (back to SoundKit ID)
@@ -1830,6 +1868,17 @@ SlashCmdList["LFGALERT"] = function(msg)
   elseif cmd == "off" then
     NS.db.enabled = false
     print("|cffff2020[LFGAlert]|r Disabled.")
+  elseif cmd == "export" then
+    print("|cffffcc00[LFGAlert] settings string (copy the green line):|r")
+    print("|cff00ff00" .. NS.ExportSettings() .. "|r")
+  elseif cmd == "import" then
+    if rest == "" then
+      print("|cffff2020[LFGAlert]|r Usage: /lfgalert import <green string from /lfgalert export>")
+    else
+      local n = NS.ImportSettings(rest)
+      print(string.format("|cffff2020[LFGAlert]|r Imported %d settings. (/reload not needed.)", n))
+      if NS.RefreshLogUI then NS.RefreshLogUI(true) end
+    end
   else
     print("|cffffcc00LFGAlert commands:|r")
     print("  /lfgalert show|hide|toggle - applicant log window")
@@ -1849,6 +1898,8 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("  /lfgalert open - open Group Finder applicants now")
     print("  /lfgalert mute [on|off] - master mute for sound/chat/screen/popup")
     print("  /lfgalert groupbykey [on|off] - group log rows under their key")
+    print("  /lfgalert export|import - share or restore your settings")
+    print("  /lfgalert rolesoundfile tank|healer|dps <path>|off - per-role sound file")
     print("  /lfgalert resetui - reset log window position / size / scale")
     print("  /lfgalert stats - session + all-time summary")
     print("  /lfgalert debug - dump log state (entries/filter/window)")
@@ -1856,4 +1907,111 @@ SlashCmdList["LFGALERT"] = function(msg)
     print("  /lfgalert listing - dump your live listing (dungeon/key source)")
     print("  /lfgalert on|off - enable/disable alerts")
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- Settings export / import: every scalar option as one shareable string.
+-- The log and stats are NOT included (per-account data). Slash input arrives
+-- lowercased, so exported strings are lowercase-safe by construction
+-- (file paths are case-insensitive in WoW).
+-- ---------------------------------------------------------------------------
+
+local EXPORT_SCALARS = {
+  { "soundEnabled", "b" }, { "soundID", "n" }, { "useCustomSound", "b" },
+  { "customSoundPath", "s" }, { "useMasterChannel", "b" },
+  { "raidWarning", "b" }, { "chatMessage", "b" }, { "flashTaskbar", "b" },
+  { "autoOpenLFG", "b" }, { "assumeOwnKey", "b" },
+  { "minIlvl", "n" }, { "minScore", "n" }, { "autoDecline", "b" },
+  { "maxLogEntries", "n" }, { "showMinimapButton", "b" }, { "minimapAngle", "n" },
+  { "muteAll", "b" }, { "statsSummary", "b" }, { "perCharLog", "b" },
+  { "groupByKey", "b" }, { "enabled", "b" },
+}
+
+function NS.ExportSettings()
+  local parts = {}
+  local function add(k, v, t)
+    if v == nil then return end
+    if t == "b" then
+      parts[#parts + 1] = k .. "=" .. (v and "1" or "0")
+    elseif t == "n" then
+      parts[#parts + 1] = k .. "=" .. tostring(v)
+    else
+      parts[#parts + 1] = k .. "=" .. tostring(v):lower():gsub(";", ",")
+    end
+  end
+  for _, sc in ipairs(EXPORT_SCALARS) do add(sc[1], NS.db[sc[1]], sc[2]) end
+  for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+    add("rs." .. role, NS.db.roleSounds and NS.db.roleSounds[role], "n")
+    add("rsf." .. role, NS.db.roleSoundFiles and NS.db.roleSoundFiles[role], "s")
+    for _, chan in ipairs({ "sound", "chat", "screen", "popup" }) do
+      local gates = NS.db.alertRoles and NS.db.alertRoles[chan]
+      add("g." .. chan .. "." .. role, gates and gates[role], "b")
+    end
+  end
+  return table.concat(parts, ";")
+end
+
+function NS.ImportSettings(str)
+  local applied = 0
+  local byName = {}
+  for _, sc in ipairs(EXPORT_SCALARS) do byName[sc[1]] = sc[2] end
+  for pair in tostring(str or ""):gmatch("[^;]+") do
+    local k, v = pair:match("^(%S+)=(.*)$")
+    if k and v then
+      local role, chan
+      if k:match("^rs%.") then
+        role = k:match("^rs%.(%a+)")
+        NS.db.roleSounds = NS.db.roleSounds or {}
+        local num = tonumber(v)
+        if role then
+          if num and num > 0 then NS.db.roleSounds[role] = num else NS.db.roleSounds[role] = nil end
+          applied = applied + 1
+        end
+      elseif k:match("^rsf%.") then
+        role = k:match("^rsf%.(%a+)")
+        NS.db.roleSoundFiles = NS.db.roleSoundFiles or {}
+        if role then
+          NS.db.roleSoundFiles[role] = (v ~= "" and v ~= "off") and v or ""
+          applied = applied + 1
+        end
+      elseif k:match("^g%.") then
+        chan, role = k:match("^g%.(%a+)%.(%a+)")
+        if chan and role then
+          NS.db.alertRoles = NS.db.alertRoles or {}
+          NS.db.alertRoles[chan] = NS.db.alertRoles[chan] or {}
+          NS.db.alertRoles[chan][role] = (v == "1" or v == "true")
+          applied = applied + 1
+        end
+      else
+        local t = byName[k]
+        if t == "b" then
+          NS.db[k] = (v == "1" or v == "true")
+          applied = applied + 1
+        elseif t == "n" then
+          local num = tonumber(v)
+          if num then NS.db[k] = num; applied = applied + 1 end
+        elseif t == "s" then
+          NS.db[k] = v
+          applied = applied + 1
+        end
+      end
+    end
+  end
+  return applied
+end
+
+-- ---------------------------------------------------------------------------
+-- Keybindings (Bindings.xml, bindable in Game Menu > Key Bindings > LFGAlert)
+-- ---------------------------------------------------------------------------
+
+BINDING_HEADER_LFGALERT = "LFGAlert"
+BINDING_NAME_LFGALERT_TOGGLELOG = "Toggle applicant log"
+BINDING_NAME_LFGALERT_OPENAPPLICANTS = "Open Group Finder applicants"
+
+function LFGAlert.ToggleLogKeybind()
+  if NS.ToggleLogUI then NS.ToggleLogUI() end
+end
+
+function LFGAlert.OpenApplicantsKeybind()
+  NS.OpenApplicants()
 end

@@ -16,5 +16,7 @@ jobs:
       - run: luarocks install luacheck
       # Lint only our files: luarocks installs its own tree (.luarocks/) into
       # the workspace, and `luacheck .` would lint hundreds of third-party
-      # toolchain files (why this job always failed before).
+      # toolchain files (why this job always failed before). luac -p catches
+      # syntax errors even when lint is clean.
+      - run: luac -p Core.lua LogFrame.lua Options.lua Locales/enUS.lua
       - run: luacheck Core.lua LogFrame.lua Options.lua Locales/enUS.lua

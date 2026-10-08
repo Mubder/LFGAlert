@@ -1,0 +1,8 @@
+<Bindings>
+  <Binding name="LFGALERT_TOGGLELOG" header="LFGALERT">
+    LFGAlert.ToggleLogKeybind()
+  </Binding>
+  <Binding name="LFGALERT_OPENAPPLICANTS">
+    LFGAlert.OpenApplicantsKeybind()
+  </Binding>
+</Bindings>

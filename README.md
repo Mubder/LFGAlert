@@ -23,6 +23,11 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
   - **Safety:** applicant IDs reset whenever you relist, so invite/decline-by-ID only act on rows from your *current* listing — old rows fall back to safe by-name invites and never decline the wrong person
 - 🔎 Log **filters + text search** — Status, Class and minimum Key dropdowns plus search (name / spec / dungeon / note), one-click "Reset Filters"; auto-declines show the reason (`Declined (Low ILvl)`)
 - 🔔 Sound ID **or custom sound file** (`/lfgalert soundfile <path>`)
+- 🎵 **Sound by role** — Tank / Healer / DPS each play their own sound so you hear *who* signed up (defaults: troll cheer / troll cheer / dracthyr cheer). Any SoundKit ID works: Settings → Sound by role (typed IDs save on Enter **or** click-away, with a click-to-preview gallery), `/lfgalert rolesound tank|healer|dps <id>|off`, or a per-role custom file via `/lfgalert rolesoundfile`. Browse IDs at wowhead.com/sounds and preview any with `/run PlaySound(<id>)`
+- 📣 **Rich stacked toasts** — every applicant gets their own line at the top of the screen ("Name - [role icon] Tank  Protection Warrior", up to 5 at once); Blizzard's raid warning only holds 2 messages, so LFGAlert renders its own stack. When several players sign up at once, nobody's alert gets dropped
+- ⌨️ **Keybinds** — Game Menu → Key Bindings → LFGAlert: toggle the log window, open the Group Finder applicants panel
+- 📤 **Settings export / import** — `/lfgalert export` prints a shareable string (all options incl. role sounds/gates), `/lfgalert import <string>` restores it. Log and stats stay yours
+- 🔧 `/lfgalert trace` — per-applicant decision dump for diagnosing alert issues
 - ★ **Highlight rules**: min item level / min M+ score (qualifying rows green + starred)
 - ⛔ **Auto-decline** below your thresholds (OFF by default; only fires with real data, announced in chat, still logged — invite stragglers back via right-click → Invite)
 - 📊 **Stats**: per-listing summary when you delist + `/lfgalert stats` (accept rate, accepted ilvl/M+ averages)
@@ -32,7 +37,7 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
 
 ## Install (manual)
 
-1. Copy the `LFGAlert` folder (containing `LFGAlert.toc`, `Core.lua`, `LogFrame.lua`, `Options.lua`, `Locales/`) into:
+1. Copy the `LFGAlert` folder (containing `LFGAlert.toc`, `Core.lua`, `LogFrame.lua`, `Options.lua`, `Bindings.xml`, `Locales/`, `Textures/`) into:
    `World of Warcraft\_retail_\Interface\AddOns\`
 2. Restart WoW / `/reload`. Enable “LFGAlert” in AddOns list if needed.
 3. List a group in Group Finder (Premade Groups). When someone applies you get sound + warning + a log row.
@@ -44,6 +49,9 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
 - `/lfgalert test` — test sound + add sample row (try right-click on it)
 - `/lfgalert sound [<id>]` — toggle sound or set sound ID (default `8959` = Raid Warning)
 - `/lfgalert soundfile <path>|off` — custom sound file, e.g. `Interface\AddOns\LFGAlert\Sounds\alert.ogg` (`off` = back to ID)
+- `/lfgalert rolesound tank|healer|dps <id>|off` — per-role SoundKit ID (off = global sound)
+- `/lfgalert rolesoundfile tank|healer|dps <path>|off` — per-role custom sound file
+- `/lfgalert export` / `/lfgalert import <string>` — share / restore settings
 - `/lfgalert minilvl <n>` — highlight min item level (`0` = off)
 - `/lfgalert minscore <n>` — highlight min M+ score (`0` = off)
 - `/lfgalert autodecline [on|off]` — auto-decline below thresholds (default OFF)
@@ -74,11 +82,14 @@ Inspired by **[Top] Party Alarm** (sound + raid-warning + chat message on new ap
 
 ## Files
 
-- `LFGAlert.toc` — addon manifest (Interface 120005)
+- `LFGAlert.toc` — addon manifest (Interface 120100)
 - `Locales/enUS.lua` — all user-facing strings (translation-ready)
-- `Core.lua` — event tracking, alerts, log storage, slash commands
+- `Core.lua` — event tracking, alerts, toasts, sounds, log storage, slash commands
 - `LogFrame.lua` — log window UI (scroll list, sorting, right-click menu, tooltips)
 - `Options.lua` — minimap button + Settings panel
+- `Bindings.xml` — keybinds (toggle log, open applicants)
+- `Textures/icon.png` — addon icon
+- `CHANGELOG.md` — release changelog (CurseForge picks it up automatically)
 - `.pkgmeta` — CurseForge/Wago packager config (no externals)
 - `LICENSE` — MIT
 
