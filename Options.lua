@@ -1,6 +1,6 @@
 -- LFGAlert - Options.lua
 -- Minimap button + Blizzard Settings panel.
-local ADDON_NAME, TITLE = ...
+local ADDON_NAME = ...
 LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {}
@@ -52,7 +52,7 @@ function NS.BuildMinimapButton()
 
   mmButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   mmButton:RegisterForDrag("LeftButton")
-  mmButton:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", function(s)
+  mmButton:SetScript("OnDragStart", function(self) self:SetScript("OnUpdate", function(_)
     local mx, my = Minimap:GetCenter()
     local cx, cy = GetCursorPosition()
     local scale = Minimap:GetEffectiveScale()
@@ -261,11 +261,13 @@ function NS.BuildOptions()
   local verText = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   verText:SetPoint("TOPLEFT", content, "TOPLEFT", 16, y)
   verText:SetTextColor(0.6, 0.6, 0.6)
-  verText:SetText(l("opt_version_fmt", "Version %s  •  build %s  •  /lfgalert for commands"):format(tostring(addonVer), tostring(NS.BUILD or "?")))
+  verText:SetText(l("opt_version_fmt", "Version %s  •  build %s  •  /lfgalert for commands")
+    :format(tostring(addonVer), tostring(NS.BUILD or "?")))
   y = y - 20
 
   Section(l("sec_mute", "Mute"))
-  Note(l("note_mute", "Master switches for every noisy part. Mute everything overrides the rows below; muted items stay fully logged."), 34)
+  Note(l("note_mute", "Master switches for every noisy part. Mute everything overrides the rows "
+    .. "below; muted items stay fully logged."), 34)
   do
     local function MuteCB(label, key, extra)
       local cb = Checkbox(content, label,
@@ -289,11 +291,13 @@ function NS.BuildOptions()
   Section(l("sec_general", "General"))
   AddCB(l("cb_enable", "Enable LFGAlert"), function() return NS.db.enabled end,
     function(v) NS.db.enabled = v end)
-  AddCB(l("cb_minimap", "Show minimap button (left: log, right: sound, drag: move)"), function() return NS.db.showMinimapButton ~= false end,
+  AddCB(l("cb_minimap", "Show minimap button (left: log, right: sound, drag: move)"),
+    function() return NS.db.showMinimapButton ~= false end,
     function(v) NS.db.showMinimapButton = v; if mmButton then mmButton:SetShown(v) end end)
   AddCB(l("cb_autoopen", "Open Group Finder applicants on new queue"), function() return NS.db.autoOpenLFG ~= false end,
     function(v) NS.db.autoOpenLFG = v end)
-  AddCB(l("cb_ownkey", "Use my own keystone for dungeon/key when listing text is hidden"), function() return NS.db.assumeOwnKey ~= false end,
+  AddCB(l("cb_ownkey", "Use my own keystone for dungeon/key when listing text is hidden"),
+    function() return NS.db.assumeOwnKey ~= false end,
     function(v) NS.db.assumeOwnKey = v end)
 
   Section(l("sec_window", "Log Window"))
@@ -308,7 +312,8 @@ function NS.BuildOptions()
         print("|cffff2020[LFGAlert]|r Log window reset.")
       end },
   })
-  AddCB(l("cb_groupbykey", 'Group rows by key ("+10 Altar of Fangs (3)")'), function() return NS.db.groupByKey ~= false end,
+  AddCB(l("cb_groupbykey", 'Group rows by key ("+10 Altar of Fangs (3)")'),
+    function() return NS.db.groupByKey ~= false end,
     function(v) NS.db.groupByKey = v if NS.RefreshLogUI then NS.RefreshLogUI(true) end end)
 
   Section(l("sec_alerts", "Alerts & Sound"))
@@ -325,7 +330,11 @@ function NS.BuildOptions()
   local eb -- forward declaration: presets update the ID box below
   do
     local bx, bw = 24, 110
-    for _, p in ipairs({ { l("preset_rw", "Raid Warning"), 8959 }, { l("preset_ready", "Ready Check"), 8960 }, { l("preset_level", "Level Up"), 12867 } }) do
+    local presets = {
+      { l("preset_rw", "Raid Warning"), 8959 }, { l("preset_ready", "Ready Check"), 8960 },
+      { l("preset_level", "Level Up"), 12867 },
+    }
+    for _, p in ipairs(presets) do
       local b = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
       b:SetSize(bw, 22)
       b:SetPoint("TOPLEFT", content, "TOPLEFT", bx, y)
@@ -381,7 +390,8 @@ function NS.BuildOptions()
   testBtn:SetScript("OnClick", function() NS.PlayAlertSound() end)
   y = y - 34
 
-  local customCB = Checkbox(content, l("cb_custom", "Use custom sound file instead of Sound ID"), function() return NS.db.useCustomSound end,
+  local customCB = Checkbox(content, l("cb_custom", "Use custom sound file instead of Sound ID"),
+    function() return NS.db.useCustomSound end,
     function(v) NS.db.useCustomSound = v end)
   customCB:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
   y = y - 30
@@ -413,7 +423,8 @@ function NS.BuildOptions()
     self:ClearFocus()
   end)
   y = y - 30
-  Note(l("note_custom_example", "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  (drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"), 34)
+  Note(l("note_custom_example", "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  "
+    .. "(drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"), 34)
 
   Section(l("sec_role_sounds", "Sound by role"))
   Note(l("note_role_sounds", "Each role can use its own SoundKit ID, so you hear who signed up "
@@ -495,7 +506,8 @@ function NS.BuildOptions()
   end
 
   Section(l("sec_roles", "Alerts by role"))
-  Note(l("note_roles", "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. Log rows, stats and auto-decline are unaffected."), 34)
+  Note(l("note_roles", "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. "
+    .. "Log rows, stats and auto-decline are unaffected."), 34)
   do
     local roles = {
       { store = "TANK", show = l("role_tank", "Tank") },
@@ -533,7 +545,8 @@ function NS.BuildOptions()
   end
 
   Section(l("sec_req", "Requirements (highlight * + auto-decline)"))
-  Note(l("note_req", "Rows at/above these get a * and green numbers, and auto-decline judges by them. 0 = off. Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."), 34)
+  Note(l("note_req", "Rows at/above these get a * and green numbers, and auto-decline judges by them. 0 = off. "
+    .. "Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."), 34)
 
   local ilvlSlider = Slider(content, l("slider_ilvl", "Min item level"), 0, 800, 1,
     function() return NS.db.minIlvl or 0 end,
@@ -547,7 +560,8 @@ function NS.BuildOptions()
   scoreSlider:SetPoint("TOPLEFT", content, "TOPLEFT", 24, y)
   y = y - 54
 
-  AddCB(l("cb_autodecline", "Auto-decline below thresholds (only with real data)"), function() return NS.db.autoDecline end,
+  AddCB(l("cb_autodecline", "Auto-decline below thresholds (only with real data)"),
+    function() return NS.db.autoDecline end,
     function(v) NS.db.autoDecline = v end)
 
   Section(l("sec_data", "Data & Stats"))
@@ -575,7 +589,8 @@ function NS.BuildOptions()
   ButtonsRow({
     { l("btn_show_stats", "Show stats"), 110, function() NS.PrintStats() end },
     { l("btn_reset_stats", "Reset stats"), 110, function()
-        NS.Data().stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
+        NS.Data().stats = { sessions = {}, total = {
+          queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } }
         refreshStatsText()
         print("|cffff2020[LFGAlert]|r Stats reset.")
       end },
@@ -584,10 +599,12 @@ function NS.BuildOptions()
         print("|cffff2020[LFGAlert]|r Log cleared.")
       end },
   })
-  Note(l("note_stats", "Stats keep the last 30 listings plus all-time totals. Per-listing summary prints to chat on delist."))
+  Note(l("note_stats", "Stats keep the last 30 listings plus all-time totals. "
+    .. "Per-listing summary prints to chat on delist."))
 
   Section(l("sec_about", "About"))
-  Note(l("note_about", "Log window: scroll to browse history, click column headers to sort, left-click selects a row, right-click for whisper / invite / decline. Full command list: /lfgalert (no args)."), 34)
+  Note(l("note_about", "Log window: scroll to browse history, click column headers to sort, left-click selects a row, "
+    .. "right-click for whisper / invite / decline. Full command list: /lfgalert (no args)."), 34)
   ButtonsRow({
     { l("btn_open_log", "Open applicant log"), 150, function() NS.ToggleLogUI(true) end },
   })

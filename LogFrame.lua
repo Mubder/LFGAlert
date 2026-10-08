@@ -6,7 +6,6 @@
 -- ID-based LFG actions are gated to the current listing session: Blizzard
 -- reuses applicantIDs across delist/relist cycles, so acting on a stale ID
 -- from an old row could invite/decline the wrong current applicant.
-local ADDON_NAME = ...
 LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {}
@@ -425,7 +424,8 @@ local function ShowRowMenu(anchor, entry)
       end },
   }
   if RowLFGActionsAllowed(entry) then
-    menu[#menu + 1] = { text = l("m_decline", "Decline applicant"), notCheckable = true, func = function() NS.DeclineApplicantByID(applicantID) end }
+    menu[#menu + 1] = { text = l("m_decline", "Decline applicant"), notCheckable = true,
+      func = function() NS.DeclineApplicantByID(applicantID) end }
   end
   EasyMenu(menu, LFGAlertDropMenu, "cursor", 0, 0, "MENU")
 end
@@ -525,7 +525,7 @@ local function MakeRow(i)
   -- Lifecycle status icons inside the Status column slot.
   if statusX then
     b.statusIcons = {}
-    for i, texPath in ipairs(STATUS_ICON_FILES) do
+    for si, texPath in ipairs(STATUS_ICON_FILES) do
       local ic = b:CreateTexture(nil, "OVERLAY")
       ic:SetSize(STATUS_ICON_SIZE, STATUS_ICON_SIZE)
       ic:SetPoint("TOPLEFT", b, "TOPLEFT", statusX + (i - 1) * (STATUS_ICON_SIZE + STATUS_ICON_GAP), -4)
@@ -545,7 +545,7 @@ local function MakeRow(i)
     { icon = "Interface\\RaidFrame\\ReadyCheck-Ready", tip = l("act_invite", "Invite to group") },
     { icon = "Interface\\RaidFrame\\ReadyCheck-NotReady", tip = l("act_decline", "Decline applicant") },
   }
-  for i, a in ipairs(actDefs) do
+  for ai, a in ipairs(actDefs) do
     local ab = CreateFrame("Button", nil, b)
     ab:SetSize(20, 20)
     ab:SetPoint("RIGHT", b, "RIGHT", -2 - (3 - i) * 24, 0)
@@ -624,14 +624,18 @@ local function MakeRow(i)
     GameTooltip:AddDoubleLine(l("tt_ilvl", "Item level"), tostring(m.itemLevel or "-"), 1, 1, 1, 1, 1, 1)
     local blizz = (m.dungeonScore and m.dungeonScore > 0) and tostring(m.dungeonScore) or "-"
     local rio = (m.rioScore and m.rioScore > 0) and tostring(m.rioScore) or "-"
+    local rioSuffix = _G.RaiderIO and "" or l("tt_rio_install", " (install Raider.IO)")
     GameTooltip:AddDoubleLine(l("tt_blizz", "M+ rating (Blizzard)"), blizz, 1, 1, 1, 1, 1, 1)
-    GameTooltip:AddDoubleLine(l("tt_rio", "RIO score") .. (_G.RaiderIO and "" or l("tt_rio_install", " (install Raider.IO)")), rio, 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine(l("tt_rio", "RIO score") .. rioSuffix, rio, 1, 1, 1, 1, 1, 1)
     if (e.numMembers or 1) > 1 and e.members then
       GameTooltip:AddLine(" ")
       GameTooltip:AddLine(l("tt_group_fmt", "Group application (%d):"):format(e.numMembers), 0.9, 0.9, 0.9)
-      for i = 2, math.min(#e.members, 8) do
-        local o = e.members[i]
-        GameTooltip:AddDoubleLine(ShortName(o.name), (o.specName or o.class or "") .. "  ilvl " .. tostring(o.itemLevel or "-") .. "  M+ " .. tostring((o.rioScore and o.rioScore > 0) and o.rioScore or (o.dungeonScore or "-")), 1, 1, 1, 0.9, 0.9, 0.9)
+      for gi = 2, math.min(#e.members, 8) do
+        local o = e.members[gi]
+        local oScore = (o.rioScore and o.rioScore > 0) and o.rioScore or (o.dungeonScore or "-")
+        local oLine = (o.specName or o.class or "") .. "  ilvl " .. tostring(o.itemLevel or "-")
+          .. "  M+ " .. tostring(oScore)
+        GameTooltip:AddDoubleLine(ShortName(o.name), oLine, 1, 1, 1, 0.9, 0.9, 0.9)
       end
     end
     if e.comment and e.comment ~= "" then
@@ -639,8 +643,9 @@ local function MakeRow(i)
       GameTooltip:AddLine("\"" .. e.comment .. "\"", 0.7, 0.9, 1, true)
     end
     if e.autoDeclined then
+      local reason = e.declineReason or l("auto_label", "Auto")
       GameTooltip:AddLine(" ")
-      GameTooltip:AddLine(l("tt_auto_declined", "Auto-declined (%s)"):format(e.declineReason or l("auto_label", "Auto")), 1, 0.4, 0.35)
+      GameTooltip:AddLine(l("tt_auto_declined", "Auto-declined (%s)"):format(reason), 1, 0.4, 0.35)
     end
     if e.history and #e.history > 1 then
       GameTooltip:AddLine(" ")
@@ -696,11 +701,8 @@ local function EntryColumns(entry)
   end
   local star = ""
   local ilvlTxt, scoreTxt
-  local thrOn, meetsAll = false, false
   if NS.MeetsThresholds and NS.db and (NS.db.minIlvl > 0 or NS.db.minScore > 0) then
-    thrOn = true
     local meetsIlvl, meetsScore, ma = NS.MeetsThresholds(m)
-    meetsAll = ma and true or false
     local ilvlNum = (m.itemLevel and m.itemLevel > 0) and math.floor(m.itemLevel) or nil
     local scoreNum = NS.EffectiveScore and NS.EffectiveScore(m) or 0
     if ilvlNum then
@@ -713,7 +715,7 @@ local function EntryColumns(entry)
     else
       scoreTxt = "-"
     end
-    if meetsAll then star = "|cffffd100* |r" end
+    if ma then star = "|cffffd100* |r" end
   else
     ilvlTxt = (m.itemLevel and m.itemLevel > 0) and tostring(math.floor(m.itemLevel)) or "-"
     local scoreNum = (m.rioScore and m.rioScore > 0) and m.rioScore or (m.dungeonScore or 0)
@@ -1389,10 +1391,10 @@ function NS.BuildLogUI()
     searchBox.Instructions:SetText(l("search_hint", "Search..."))
   end
 
-  local function DropLabel(text, x, w)
+  local function DropLabel(text, x, lw)
     local fs = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     fs:SetPoint("LEFT", logFrame, "TOPLEFT", x, -75)
-    fs:SetWidth(w)
+    fs:SetWidth(lw)
     fs:SetJustifyH("LEFT")
     fs:SetText(text)
     fs:SetTextColor(1, 0.82, 0)
@@ -1571,7 +1573,8 @@ function NS.BuildLogUI()
 
   local hint = logFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   hint:SetPoint("BOTTOM", logFrame, "BOTTOM", 0, 1)
-  hint:SetText(l("footer_hint", "Left-click: select  •  Right-click: whisper / invite / decline  •  Scroll: browse  •  Click a column header to sort"))
+  hint:SetText(l("footer_hint", "Left-click: select  •  Right-click: whisper / invite / decline  •  "
+    .. "Scroll: browse  •  Click a column header to sort"))
   hint:SetTextColor(0.55, 0.55, 0.55)
 
   -- Re-render + remember size whenever the user resizes the window.

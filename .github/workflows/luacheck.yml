@@ -14,4 +14,7 @@ jobs:
           luaVersion: "5.1"
       - uses: leafo/gh-actions-luarocks@v5
       - run: luarocks install luacheck
-      - run: luacheck .
+      # Lint only our files: luarocks installs its own tree (.luarocks/) into
+      # the workspace, and `luacheck .` would lint hundreds of third-party
+      # toolchain files (why this job always failed before).
+      - run: luacheck Core.lua LogFrame.lua Options.lua Locales/enUS.lua

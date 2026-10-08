@@ -21,6 +21,7 @@ globals = {
   "LFGAlertFilterMenu",
   "LFGAlertMinimapButton",
   "LFGAlertToastFrame",
+  "LFGAlertMinimapMenu",
 }
 
 -- WoW API + FrameXML we read. Not exhaustive: extend as new APIs are used.
@@ -39,6 +40,9 @@ read_globals = {
   "PlaySound", "PlaySoundFile", "FlashClientIcon",
   "RaidNotice_AddMessage", "RaidWarningFrame", "UIErrorsFrame", "ChatTypeInfo",
   "GetSpecializationInfoByID", "GetRealmName", "GetCursorPosition",
+  "GetTime", "GetAddOnMetadata", "InviteUnit", "LoadAddOn", "BackdropTemplateMixin",
+  "GroupFinderFrame", "PVEFrame", "PVEFrame_ShowFrame", "LFGListFrame",
+  "LFGListFrame_SetActivePanel",
   "UnitIsGroupLeader", "UnitName", "UnitClass", "UnitLevel", "IsInGroup",
   "InCombatLockdown", "GetMouseFoci",
   -- Menus / chat interop

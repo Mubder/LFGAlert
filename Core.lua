@@ -13,7 +13,7 @@ LFGAlert = LFGAlert or {}
 local NS = LFGAlert
 local L = NS.L or {} -- from Locales\enUS.lua (loaded first per .toc)
 local function l(key, fallback) return L[key] or fallback end
-NS.BUILD = 41 -- bump every shipment; shown in load message + /lfgalert debug
+NS.BUILD = 42 -- bump every shipment; shown in load message + /lfgalert debug
 
 -- Quiet trace channel (/lfgalert trace on): prints scan/detection decisions
 -- so alert dropouts can be diagnosed from one chat dump.
@@ -326,9 +326,9 @@ local function SnapshotApplicant(applicantID, cachedListing, rioMemo)
   local members = {}
   local numMembers = appInfo.numMembers or 1
   for i = 1, numMembers do
-    local mOk, name, class, locClass, level, itemLevel, honorLevel,
-      tank, healer, damage, assignedRole, relationship,
-      dungeonScore, pvpItemLevel, factionGroup, raceID, specID, isLeaver =
+    local mOk, name, class, locClass, level, itemLevel, _,
+      tank, healer, damage, assignedRole, _,
+      dungeonScore, _, _, _, specID, _ =
       pcall(C_LFGList.GetApplicantMemberInfo, applicantID, i)
     -- pcall returns ok + all returns; if ok is true, name is first real return.
     -- NOTE: member data is often not ready on the first event (nil returns);
@@ -549,7 +549,8 @@ function NS.Data()
     local k = CharKey()
     local c = NS.db.chars[k]
     if type(c) ~= "table" then
-      c = { log = {}, stats = { sessions = {}, total = { queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } } }
+      c = { log = {}, stats = { sessions = {}, total = {
+        queued = 0, invited = 0, accepted = 0, declined = 0, auto = 0, gone = 0 } } }
       NS.db.chars[k] = c
     end
     if type(c.log) ~= "table" then c.log = {} end
@@ -570,6 +571,8 @@ end
 
 -- Toggle the per-character log. First enable seeds the fresh character store
 -- from shared history, so flipping the switch never looks like data loss.
+-- (Plain print, not the applicant ChatMessage(): defined further down and
+-- gated on alert settings - wrong tool for settings feedback anyway.)
 function NS.SetPerCharLog(v)
   NS.db.perCharLog = v and true or false
   if v and LFGAlertDB and type(LFGAlertDB.log) == "table" and #LFGAlertDB.log > 0 then
@@ -577,7 +580,7 @@ function NS.SetPerCharLog(v)
     if #(D.log or {}) == 0 then
       D.log = DeepCopy(LFGAlertDB.log)
       if type(LFGAlertDB.stats) == "table" then D.stats = DeepCopy(LFGAlertDB.stats) end
-      ChatMessage("Per-character log ON: seeded " .. #D.log .. " stored rows from shared history.")
+      print("|cffff2020[LFGAlert]|r Per-character log ON: seeded " .. #D.log .. " rows from shared history.")
     end
   end
   if NS.RefreshLogUI then NS.RefreshLogUI(true) end
@@ -940,7 +943,7 @@ end
 -- Rich center toast: name + role (icon + colored Tank/Heal/DPS) + class-colored
 -- spec. Used by the instant alert AND by the backfill path once member data
 -- lands (upgrading the generic "New applicant!" banner).
-local function CenterRichAlert(applicantID, snap)
+local function CenterRichAlert(_, snap)
   local pm = snap and snap.members and snap.members[1]
   if not (pm and pm.name) then return end
   if NS.db and NS.db.muteAll then return end
@@ -985,7 +988,7 @@ function NS.AlertNewApplicant(applicantID, snap)
   end
 end
 
-function NS.AnnounceStatusChange(applicantID, oldStatus, newStatus, snap)
+function NS.AnnounceStatusChange(applicantID, _, newStatus, snap)
   -- Flood control: chat only for fresh invites. Accepts, declines and leaves
   -- live in the log (and stats) only.
   if newStatus ~= "invited" then return end
@@ -1457,7 +1460,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
     SafeBuild("log window", NS.BuildLogUI)
     SafeBuild("minimap button", NS.BuildMinimapButton)
     SafeBuild("settings panel", NS.BuildOptions)
-    print("|cffffcc00" .. l("msg_loaded", "LFGAlert loaded (build %s). /lfgalert for log & options."):format(tostring(NS.BUILD)) .. "|r")
+    local loaded = l("msg_loaded", "LFGAlert loaded (build %s). /lfgalert for log & options.")
+      :format(tostring(NS.BUILD))
+    print("|cffffcc00" .. loaded .. "|r")
     return
   end
 
@@ -1711,7 +1716,7 @@ SlashCmdList["LFGALERT"] = function(msg)
     if C_LFGList and C_LFGList.GetActiveEntryInfo then
       local ok, e = pcall(C_LFGList.GetActiveEntryInfo)
       if ok and e then
-        local acts = "?"
+        local acts
         if type(e.activityIDs) == "table" then
           local t = {}
           for _, v in ipairs(e.activityIDs) do t[#t + 1] = tostring(v) end
@@ -1735,8 +1740,8 @@ SlashCmdList["LFGALERT"] = function(msg)
       end
     end
     if C_MythicPlus and C_MythicPlus.GetOwnedKeystoneLevel then
-      local okL, lvl = pcall(C_MythicPlus.GetOwnedKeystoneLevel)
-      local okM, mapID = pcall(C_MythicPlus.GetOwnedKeystoneChallengeMapID)
+      local _, lvl = pcall(C_MythicPlus.GetOwnedKeystoneLevel)
+      local _, mapID = pcall(C_MythicPlus.GetOwnedKeystoneChallengeMapID)
       print("  ownedKey: lvl=" .. tostring(lvl) .. " mapID=" .. tostring(mapID))
       if mapID then
         for _, fn in ipairs({ "GetMapInfo", "GetMapUIInfo" }) do
@@ -1767,14 +1772,16 @@ SlashCmdList["LFGALERT"] = function(msg)
     local log = NS.Data().log or {}
     local fst = (NS.logFilter and NS.logFilter.status) or "?"
     local q = (NS.logFilter and NS.logFilter.query) or ""
-    print(string.format("|cffff2020[LFGAlert]|r debug [build %s]: %d stored, filter=%s search=\"%s\"", tostring(NS.BUILD), #log, fst, q))
+    print(string.format("|cffff2020[LFGAlert]|r debug [build %s]: %d stored, filter=%s search=\"%s\"",
+      tostring(NS.BUILD), #log, fst, q))
     for i = math.max(1, #log - 4), #log do
       local e = log[i]
       if e and e.separator then
         print("  [" .. i .. "] --- " .. tostring(e.separator))
       elseif e then
         local nm = (e.members and e.members[1] and e.members[1].name) or "?"
-        print(string.format("  [%d] id=%s status=%s members=%d name=%s", i, tostring(e.applicantID), tostring(e.status), #(e.members or {}), tostring(nm)))
+        print(string.format("  [%d] id=%s status=%s members=%d name=%s",
+          i, tostring(e.applicantID), tostring(e.status), #(e.members or {}), tostring(nm)))
       end
     end
     if NS.ToggleLogUI then NS.ToggleLogUI(true) end

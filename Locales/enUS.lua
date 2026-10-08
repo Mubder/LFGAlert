@@ -4,14 +4,14 @@
 -- Translations: copy this file to e.g. Locales/deDE.lua and translate the
 -- values (not the keys), then list it in the .toc for that locale.
 -- Slash-command output and /lfgalert debug stay inline English by design.
-local ADDON_NAME = ...
 LFGAlert = LFGAlert or {}
 local L = {}
 LFGAlert.L = L
 
 -- Log window -----------------------------------------------------------------
 L.log_title         = "LFGAlert Applicant Log"
-L.footer_hint       = "Left-click: select  •  Right-click: whisper / invite / decline  •  Scroll: browse  •  Click a column header to sort"
+L.footer_hint       = "Left-click: select  •  Right-click: whisper / invite / decline  •  "
+  .. "Scroll: browse  •  Click a column header to sort"
 L.entries_fmt       = "%d of %d entries"
 L.empty_none        = "No applicants logged yet — new queues will appear here"
 L.empty_filtered    = "No match — set Filter: All and clear the search box"
@@ -155,8 +155,10 @@ L.preset_rw     = "Raid Warning"
 L.preset_ready  = "Ready Check"
 L.preset_level  = "Level Up"
 L.btn_test      = "Test sound"
-L.note_custom_example = "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  (drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"
-L.note_req = "Rows at/above these get a * and green numbers, and auto-decline judges by them. 0 = off. Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."
+L.note_custom_example = "Example: Interface\\AddOns\\LFGAlert\\Sounds\\alert.ogg  "
+  .. "(drop your own .ogg/.mp3 into the addon folder; restart WoW so it sees new files)"
+L.note_req = "Rows at/above these get a * and green numbers, and auto-decline judges by them. 0 = off. "
+  .. "Exact values via /lfgalert minilvl <n> and /lfgalert minscore <n>."
 L.slider_ilvl  = "Min item level"
 L.slider_score = "Min M+ score"
 L.slider_scale = "Log window scale"
@@ -168,7 +170,8 @@ L.btn_reset_ui    = "Reset window position & size"
 L.stats_summary_fmt = "All time: %d queued • %d accepted • %d declined%s"
 L.no_stats    = "No stats yet."
 L.note_stats  = "Stats keep the last 30 listings plus all-time totals. Per-listing summary prints to chat on delist."
-L.note_about  = "Log window: scroll to browse history, click column headers to sort, left-click selects a row, right-click for whisper / invite / decline. Full command list: /lfgalert (no args)."
+L.note_about  = "Log window: scroll to browse history, click column headers to sort, left-click selects a row, "
+  .. "right-click for whisper / invite / decline. Full command list: /lfgalert (no args)."
 
 -- Minimap button
 L.mm_open  = "Left-click: open applicant log"
@@ -183,7 +186,8 @@ L.off = "OFF"
 
 -- Mute board
 L.sec_mute    = "Mute"
-L.note_mute   = "Master switches for every noisy part. Mute everything overrides the rows below; muted items stay fully logged."
+L.note_mute   = "Master switches for every noisy part. Mute everything overrides the rows below; "
+  .. "muted items stay fully logged."
 L.mute_all    = "Mute everything (sound, chat, screen, popup)"
 L.mute_sound  = "Sound alerts"
 L.mute_chat   = "Chat messages"
@@ -200,7 +204,8 @@ L.cb_groupbykey = 'Group rows by key ("+10 Altar of Fangs (3)")'
 
 -- Alerts by role
 L.sec_roles  = "Alerts by role"
-L.note_roles = "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. Log rows, stats and auto-decline are unaffected."
+L.note_roles = "Uncheck a role to mute it per channel. Unknown roles (no data yet) always alert. "
+  .. "Log rows, stats and auto-decline are unaffected."
 
 -- Sound by role
 L.sec_role_sounds  = "Sound by role"
