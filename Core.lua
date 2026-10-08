@@ -21,8 +21,8 @@ local function Trace(msg)
   if NS.db and NS.db.traceAlerts then
     print("|cff888888[LFGAlert] trace|r " .. msg)
   end
-NS.Trace = Trace -- shared with the split files
 end
+NS.Trace = Trace -- shared with the split files
 
 -- ---------------------------------------------------------------------------
 -- Defaults / DB
@@ -131,7 +131,6 @@ local function IsGroupLeader()
 end
 NS.HasActiveListing = HasActiveListing
 NS.IsGroupLeader = IsGroupLeader
-NS.RoleAlertAllowed = RoleAlertAllowed
 
 local function ClassColorize(classFileName, text)
   if classFileName and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFileName] then
@@ -232,6 +231,7 @@ local function RoleAlertAllowed(channel, mem)
   if v == nil then return true end
   return v and true or false
 end
+NS.RoleAlertAllowed = RoleAlertAllowed -- shared (Applicants + Alerts)
 
 
 -- ---------------------------------------------------------------------------
@@ -255,16 +255,6 @@ function NS.MeetsThresholds(mem)
   return meetsIlvl, meetsScore, (meetsIlvl and meetsScore)
 end
 
-local function CenterMessage(text)
-  if not NS.db or not NS.db.raidWarning then return end
-  if RaidWarningFrame and RaidNotice_AddMessage then
-    local ok = pcall(RaidNotice_AddMessage, RaidWarningFrame, text, ChatTypeInfo and ChatTypeInfo["RAID_WARNING"])
-    if ok then return end
-  end
-  if UIErrorsFrame then
-    pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, text, 1, 0.2, 0.2, 1.0, 5)
-  end
-end
 
 
 -- ---------------------------------------------------------------------------
@@ -335,7 +325,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
           end
           return
         end
-        HandleApplicantSnapshot(applicantID, snap, "updated")
+        NS.HandleApplicantSnapshot(applicantID, snap, "updated")
         if not NS.SnapHasData(snap) then
           -- Details still not ready: retry a few times, then give up.
           local prev = NS._known[applicantID]
@@ -363,13 +353,13 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
   elseif event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
     if HasActiveListing() then
-      if not hadListing then
-        AdoptOrIncrementSession()
+      if not NS._hadListing then
+        NS.AdoptOrIncrementSession()
       end
-      hadListing = true
+      NS._hadListing = true
       NS.Rescan("entry")
     else
-      hadListing = false
+      NS._hadListing = false
       NS.WipeKnown("— listing ended —")
     end
   elseif event == "PLAYER_ENTERING_WORLD" then

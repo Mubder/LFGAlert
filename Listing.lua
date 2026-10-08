@@ -110,3 +110,4 @@ function NS.CurrentListingInfo()
   return info
 end
 
+NS.CleanKString = CleanKString -- used by Applicants snapshots

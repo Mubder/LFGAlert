@@ -7,7 +7,6 @@ local Trace = NS.Trace
 
 local HasActiveListing = NS.HasActiveListing
 local IsGroupLeader = NS.IsGroupLeader
-local ClassColorize = NS.ClassColorize or function(_, text) return text end
 local RoleAlertAllowed = NS.RoleAlertAllowed
 
 local function GetSpecName(specID)
@@ -72,11 +71,14 @@ end
 -- known[applicantID] = { status = "applied", time = ..., members = {...}, comment = "..." }
 local known = {}
 NS._known = known
+NS.HandleApplicantSnapshot = HandleApplicantSnapshot
+NS.AdoptOrIncrementSession = AdoptOrIncrementSession
+NS.CopySnapMembers = CopySnapMembers
 -- Listing session: applicantIDs reset on every delist/relist, so stamp entries
 -- to never mix data across listings. The UI uses this to refuse acting on
 -- stale applicantIDs from previous listings (they can be reused by Blizzard).
 local listingSession = 1
-local hadListing = false
+NS._NS._hadListing = false
 
 function NS.CurrentListingSession()
   return listingSession
@@ -120,7 +122,7 @@ local function SnapshotApplicant(applicantID, cachedListing, rioMemo)
   return {
     status = appInfo.applicationStatus,
     numMembers = numMembers,
-    comment = CleanKString(appInfo.comment) or "",
+    comment = NS.CleanKString(appInfo.comment) or "",
     isNew = appInfo.isNew,
     members = members,
     -- Same listing applies to every applicant in one scan: pass it in to
@@ -586,6 +588,53 @@ end
 -- the toast style inconsistent (whoever's data was late got the generic
 -- banner). Wait briefly (bounded ~2.4s) so the alert can be the rich one;
 -- if data never comes, fall back to the generic banner + backfill promotion.
+local DelayedApplicantAlert
+DelayedApplicantAlert = function(applicantID, attempt)
+  C_Timer.After(0.6, function()
+    if not HasActiveListing() then return end
+    local kp = known[applicantID]
+    if kp then kp.alertPending = nil end
+    -- Abort only on a POSITIVE non-applied status. Fresh applicants often
+    -- return an info object with a NIL status ("not reported yet") - that is
+    -- "unknown", NOT "left", and must never drop the alert (this exact
+    -- assumption silently ate follow-up applicants' alerts in build 32-33).
+    local ok, info = pcall(C_LFGList.GetApplicantInfo, applicantID)
+    if ok and type(info) == "table" and info.applicationStatus ~= nil
+      and info.applicationStatus ~= "applied" then
+      Trace(string.format("#%s delayed: left queue (%s), abort",
+        tostring(applicantID), tostring(info.applicationStatus)))
+      return
+    end
+    local snap = SnapshotApplicant(applicantID)
+    local prev = known[applicantID]
+    if snap and prev then prev.snap = snap end
+    if snap and SnapHasData(snap) then
+      -- Data landed: side effects here, then the backfill fills the "?" row,
+      -- prints the chat line and fires the rich toast (gated per role).
+      Trace(string.format("#%s delayed: data landed on attempt %d", tostring(applicantID), attempt))
+      local pm = snap.members[1]
+      if not (NS.db and NS.db.muteAll) and RoleAlertAllowed("sound", pm) then
+        NS.PlayAlertSound(tostring(applicantID), NS.ResolveRole(pm))
+      end
+      if NS.db and NS.db.autoOpenLFG and not (NS.db and NS.db.muteAll)
+        and RoleAlertAllowed("popup", pm) then
+        NS.OpenApplicants()
+      end
+      BackfillLogEntry(applicantID, snap)
+    elseif attempt >= 4 then
+      -- Still nothing: alert with what we know (generic banner); the normal
+      -- scan/backfill retries will promote it to the rich toast later.
+      Trace(string.format("#%s delayed: no data after %d attempts, generic alert", tostring(applicantID), attempt))
+      local best = (snap and SnapHasData(snap) and snap) or (prev and prev.snap)
+      if best then NS.AlertNewApplicant(applicantID, best) end
+    else
+      Trace(string.format("#%s delayed: attempt %d, still no data", tostring(applicantID), attempt))
+      DelayedApplicantAlert(applicantID, attempt + 1)
+    end
+  end)
+end
+
+
 local function HandleApplicantSnapshot(applicantID, snap, reason)
   if not snap then return end
   local prev = known[applicantID]
@@ -624,7 +673,7 @@ local function HandleApplicantSnapshot(applicantID, snap, reason)
     -- Same status: refresh snapshot (ilvl/score may have resolved late)
     -- and fill any "?" log rows now that data is available.
     prev.snap = snap
-    BackfillLogEntry(applicantID, snap)
+    NS.BackfillLogEntry(applicantID, snap)
   end
 end
 
@@ -638,9 +687,9 @@ local function ScanApplicants(reason, retryN)
   -- A listing can be active before its event reaches us (login timing):
   -- settle the session first, then prime known[] so the login scan does not
   -- re-alert everyone who queued before the reload.
-  if not hadListing then
+  if not NS._hadListing then
     AdoptOrIncrementSession()
-    hadListing = true
+    NS._hadListing = true
   end
   if reason == "login" then PrimeKnownFromLog() end
 
@@ -755,3 +804,6 @@ NS.HandleApplicantGone = HandleApplicantGone
 NS.IsApplicantPresent = IsApplicantPresent
 NS.ScanApplicants = ScanApplicants
 NS._known = known
+NS.HandleApplicantSnapshot = HandleApplicantSnapshot
+NS.AdoptOrIncrementSession = AdoptOrIncrementSession
+NS.CopySnapMembers = CopySnapMembers

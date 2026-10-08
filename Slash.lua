@@ -24,7 +24,7 @@ SlashCmdList["LFGALERT"] = function(msg)
   elseif cmd == "test" then
     NS.PlayAlertSound()
     NS.ApplicantToast("LFGAlert test: sound + warning OK")
-    ChatMessage("Test alert OK. List a group and have someone apply to see real entries. (Fake log row added.)")
+    NS.ChatMessage("Test alert OK. List a group and have someone apply to see real entries. (Fake log row added.)")
     -- Add a fake row so users can try right-click whisper/invite UI instantly.
     NS.AddLogEntry(0, nil, "applied", {
       status = "applied", numMembers = 1, comment = "Test entry (/lfgalert clear to remove)",

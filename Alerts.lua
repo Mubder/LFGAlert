@@ -11,6 +11,17 @@ local MemberSummary = NS.MemberSummary
 local ShortName = NS.ShortName or function(n) return n or "?" end
 local ClassColorize = NS.ClassColorize or function(_, text) return text end
 local RoleAlertAllowed = NS.RoleAlertAllowed
+local function CenterMessage(text)
+  if not NS.db or not NS.db.raidWarning then return end
+  if RaidWarningFrame and RaidNotice_AddMessage then
+    local ok = pcall(RaidNotice_AddMessage, RaidWarningFrame, text, ChatTypeInfo and ChatTypeInfo["RAID_WARNING"])
+    if ok then return end
+  end
+  if UIErrorsFrame then
+    pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, text, 1, 0.2, 0.2, 1.0, 5)
+  end
+end
+
 
 -- ---------------------------------------------------------------------------
 -- Alerts
@@ -235,11 +246,12 @@ local function BackfillLogEntry(applicantID, snap)
   if type(D.log) ~= "table" then return false end
   local changed = false
   for _, e in ipairs(D.log) do
-    if not e.separator and e.applicantID == applicantID and (e.session == nil or e.session == listingSession) then
+    if not e.separator and e.applicantID == applicantID
+      and (e.session == nil or e.session == NS.CurrentListingSession()) then
       local em = e.members and e.members[1]
       if not (em and em.name) then
         e.members = e.members or {}
-        CopySnapMembers(e.members, snap)
+        NS.CopySnapMembers(e.members, snap)
         e.numMembers = snap.numMembers or e.numMembers
         if snap.comment and snap.comment ~= "" then e.comment = snap.comment end
         if e.dungeon == nil and snap.listing and snap.listing.dungeon then
@@ -274,51 +286,6 @@ NS.BackfillLogEntry = BackfillLogEntry
 -- Delayed alert continuation (called from HandleApplicantSnapshot above via
 -- the local declared here; assignment must precede the handler's call site,
 -- which is further down the file).
-local DelayedApplicantAlert
-DelayedApplicantAlert = function(applicantID, attempt)
-  C_Timer.After(0.6, function()
-    if not HasActiveListing() then return end
-    local kp = known[applicantID]
-    if kp then kp.alertPending = nil end
-    -- Abort only on a POSITIVE non-applied status. Fresh applicants often
-    -- return an info object with a NIL status ("not reported yet") - that is
-    -- "unknown", NOT "left", and must never drop the alert (this exact
-    -- assumption silently ate follow-up applicants' alerts in build 32-33).
-    local ok, info = pcall(C_LFGList.GetApplicantInfo, applicantID)
-    if ok and type(info) == "table" and info.applicationStatus ~= nil
-      and info.applicationStatus ~= "applied" then
-      Trace(string.format("#%s delayed: left queue (%s), abort",
-        tostring(applicantID), tostring(info.applicationStatus)))
-      return
-    end
-    local snap = SnapshotApplicant(applicantID)
-    local prev = known[applicantID]
-    if snap and prev then prev.snap = snap end
-    if snap and SnapHasData(snap) then
-      -- Data landed: side effects here, then the backfill fills the "?" row,
-      -- prints the chat line and fires the rich toast (gated per role).
-      Trace(string.format("#%s delayed: data landed on attempt %d", tostring(applicantID), attempt))
-      local pm = snap.members[1]
-      if not (NS.db and NS.db.muteAll) and RoleAlertAllowed("sound", pm) then
-        NS.PlayAlertSound(tostring(applicantID), NS.ResolveRole(pm))
-      end
-      if NS.db and NS.db.autoOpenLFG and not (NS.db and NS.db.muteAll)
-        and RoleAlertAllowed("popup", pm) then
-        NS.OpenApplicants()
-      end
-      BackfillLogEntry(applicantID, snap)
-    elseif attempt >= 4 then
-      -- Still nothing: alert with what we know (generic banner); the normal
-      -- scan/backfill retries will promote it to the rich toast later.
-      Trace(string.format("#%s delayed: no data after %d attempts, generic alert", tostring(applicantID), attempt))
-      local best = (snap and SnapHasData(snap) and snap) or (prev and prev.snap)
-      if best then NS.AlertNewApplicant(applicantID, best) end
-    else
-      Trace(string.format("#%s delayed: attempt %d, still no data", tostring(applicantID), attempt))
-      DelayedApplicantAlert(applicantID, attempt + 1)
-    end
-  end)
-end
 
 
 -- ---------------------------------------------------------------------------
